@@ -3,17 +3,28 @@
 All notable changes to `rextio-tensorflow` are documented here following Keep a
 Changelog and Semantic Versioning conventions.
 
-## [0.1.0] — Alpha (unreleased / private)
+## [0.1.0] — Public Alpha (unreleased / upload-gated)
 
-Private local Alpha PoC. Package remains unpublished (`Private :: Do Not
-Upload`). No performance benchmark gate.
+Public Alpha source candidate. Package remains unpublished and protected by
+the temporary `Private :: Do Not Upload` release gate. No performance
+benchmark gate.
 
 ### Added
 
-- Private package scaffold for Rextio plugin API **1.3** with
-  `Private :: Do Not Upload`.
-- Frozen baseline: macOS arm64, CPython `>=3.11,<3.12`, `tensorflow==2.21.0`,
+- Public Alpha package scaffold for Rextio plugin API **1.3**, retaining
+  `Private :: Do Not Upload` only until owner-approved release preparation.
+- Frozen baseline: CPython `>=3.11,<3.12`, `tensorflow==2.21.0`,
   `rextio>=0.1.3,<0.2`, CPU float32 rank-1/2, inference only.
+- **Platform ABI profiles** in the generated runtime helper:
+  - **Certified**: macOS arm64 (`macos-arm64`) — real-Cargo E2E path
+  - **Experimental**: Linux **GNU/glibc** x86_64 and aarch64
+    (`target_env=gnu` only; manylinux TF 2.21) — wheel artifact ABI verified;
+    no certified Linux E2E claim; explicit `#[link(name = "dl")]` on Linux GNU
+  - **Native-build fail-closed**: Windows (deferred), Linux musl, and every
+    other triple via clear `compile_error!` (not a runtime dlfcn promise)
+- Explicit per-profile loader flags, wheel image basenames, and
+  `platform.machine()` checks (Darwin vs Linux glibc `RTLD_NOLOAD` / `RTLD_LOCAL`
+  numeric values).
 - Import-minimal plugin facade (`rextio_tensorflow.plugin`) and annotation
   vocabulary (`rextio_tensorflow.types`).
 - Canonical generated Rust module `rextio_tensorflow_runtime`: dlopen/dlsym of
@@ -29,8 +40,20 @@ Upload`). No performance benchmark gate.
 - Alpha claim/lower surface: `tf.matmul` / `tf.linalg.matmul`, `tf.nn.relu`,
   `tf.add` / binop `+`, `tf.reduce_mean(..., axis=1)`, optional
   `tf.nn.sigmoid`.
-- Focused plugin contract/claim/lower/import-minimal tests and one real-Cargo
-  E2E against `/tmp/rextio-tensorflow-stage0/venv`.
+- Focused plugin contract/claim/lower/import-minimal tests, platform-profile
+  source contracts, one real-Cargo E2E (macOS arm64 certified), and an opt-in Linux experimental probe
+  (`REXTIO_TF_LINUX_PROBE=1`).
+- Machine-readable Linux/macOS × x86/x64/ARM32/ARM64 truth matrix. Missing
+  pinned runtimes are tested as explicit native-build fail-closed outcomes,
+  not reported as native support.
+- Read-only, immutable-Action-pinned GitHub CI split into quality,
+  platform-contract, real native-E2E, and package jobs, plus a manual
+  availability-gated Linux AArch64 workflow.
+- Exact PEP 517 backend pins and candidate-wheel installation before the
+  real native route/lifetime E2E; editable-source execution is not accepted as
+  public CI certification evidence.
+- Portable real-Cargo E2E interpreter selection: the invoking CPython 3.11 +
+  TensorFlow 2.21.0 environment replaces the historical fixed temporary path.
 - Docs: README, this CHANGELOG, `docs/implementation-plan-0.1.0.md`.
 
 ### Notes
@@ -40,3 +63,9 @@ Upload`). No performance benchmark gate.
 - Runtime incompatibility raises a fail-closed native exception in Alpha;
   transparent call-time fallback requires a future core runtime-availability
   hook and is not claimed by this release.
+- Linux experimental support is based on offline inspection of official
+  `tensorflow==2.21.0` manylinux wheels; it is **not** a performance promise
+  and is **not** certified real-Cargo E2E evidence.
+- The exact private eager bridge and eager-context ABI remains prominently
+  disclosed; runtime mismatch, `RTLD_NOLOAD` failure, or per-image provenance
+  failure remains fail-closed with no transparent Python replay.

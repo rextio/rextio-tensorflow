@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools>=77.0.3"]
+requires = ["setuptools==82.0.1", "wheel==0.47.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "rextio-tensorflow"
 dynamic = ["version"]
-description = "Private Alpha PoC Rextio plugin that lowers a tiny TensorFlow 2.21.0 CPU inference slice to native Rust via the wheel TFE C API (plugin API 1.3)."
+description = "Public Alpha Rextio plugin that lowers a tiny TensorFlow 2.21.0 CPU inference slice to native Rust via the wheel TFE C API (plugin API 1.3)."
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = "MIT"
@@ -23,7 +23,7 @@ classifiers = [
   "Topic :: Software Development :: Build Tools",
   "Private :: Do Not Upload",
 ]
-# Private Alpha: no abandoned high-level tensorflow Rust crate. Native code
+# Public Alpha upload gate: no abandoned high-level tensorflow Rust crate. Native code
 # dlopens the active Python tensorflow==2.21.0 wheel (TFE C API + private
 # EagerTensor bridge). Discovery stays import-minimal (never imports TF).
 dependencies = [
@@ -34,6 +34,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/rextio/rextio-tensorflow"
 Changelog = "https://github.com/rextio/rextio-tensorflow/blob/main/CHANGELOG.md"
+Source = "https://github.com/rextio/rextio-tensorflow"
+Issues = "https://github.com/rextio/rextio-tensorflow/issues"
 
 [project.entry-points."rextio.plugins"]
 rextio-tensorflow = "rextio_tensorflow.plugin:plugin"

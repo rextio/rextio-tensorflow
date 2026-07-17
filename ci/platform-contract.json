@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "runtime_pin": {
+    "python_implementation": "CPython",
+    "python_version": "3.11",
+    "tensorflow_version": "2.21.0"
+  },
+  "profiles": [
+    {
+      "id": "linux-x86_64",
+      "os": "linux",
+      "arch": "x86_64",
+      "target_triple": "x86_64-unknown-linux-gnu",
+      "rust_cfg": {"target_os": "linux", "target_arch": "x86_64", "target_env": "gnu"},
+      "support_class": "experimental",
+      "ci_class": "hosted-native-e2e",
+      "runtime_profile": true,
+      "required_result": "real-cargo-e2e"
+    },
+    {
+      "id": "linux-aarch64",
+      "os": "linux",
+      "arch": "aarch64",
+      "target_triple": "aarch64-unknown-linux-gnu",
+      "rust_cfg": {"target_os": "linux", "target_arch": "aarch64", "target_env": "gnu"},
+      "support_class": "experimental",
+      "ci_class": "manual-availability-gated-native-e2e",
+      "runtime_profile": true,
+      "required_result": "real-cargo-e2e-when-runner-available"
+    },
+    {
+      "id": "linux-i686",
+      "os": "linux",
+      "arch": "i686",
+      "target_triple": "i686-unknown-linux-gnu",
+      "rust_cfg": {"target_os": "linux", "target_arch": "x86", "target_env": "gnu"},
+      "support_class": "unsupported",
+      "ci_class": "expected-unsupported",
+      "runtime_profile": false,
+      "required_result": "native-build-fail-closed"
+    },
+    {
+      "id": "linux-armv7",
+      "os": "linux",
+      "arch": "armv7",
+      "target_triple": "armv7-unknown-linux-gnueabihf",
+      "rust_cfg": {"target_os": "linux", "target_arch": "arm", "target_env": "gnu"},
+      "support_class": "unsupported",
+      "ci_class": "expected-unsupported",
+      "runtime_profile": false,
+      "required_result": "native-build-fail-closed"
+    },
+    {
+      "id": "macos-arm64",
+      "os": "macos",
+      "arch": "arm64",
+      "target_triple": "aarch64-apple-darwin",
+      "rust_cfg": {"target_os": "macos", "target_arch": "aarch64", "target_env": ""},
+      "support_class": "certified",
+      "ci_class": "hosted-native-e2e",
+      "runtime_profile": true,
+      "required_result": "real-cargo-e2e"
+    },
+    {
+      "id": "macos-x86_64",
+      "os": "macos",
+      "arch": "x86_64",
+      "target_triple": "x86_64-apple-darwin",
+      "rust_cfg": {"target_os": "macos", "target_arch": "x86_64", "target_env": ""},
+      "support_class": "availability-gated",
+      "ci_class": "expected-unsupported",
+      "runtime_profile": false,
+      "required_result": "native-build-fail-closed-until-exact-wheel-exists"
+    },
+    {
+      "id": "macos-i686",
+      "os": "macos",
+      "arch": "i686",
+      "target_triple": "i686-apple-darwin",
+      "rust_cfg": {"target_os": "macos", "target_arch": "x86", "target_env": ""},
+      "support_class": "unsupported",
+      "ci_class": "expected-unsupported",
+      "runtime_profile": false,
+      "required_result": "native-build-fail-closed"
+    },
+    {
+      "id": "macos-armv7",
+      "os": "macos",
+      "arch": "armv7",
+      "target_triple": "armv7-apple-darwin",
+      "rust_cfg": {"target_os": "macos", "target_arch": "arm", "target_env": ""},
+      "support_class": "unsupported",
+      "ci_class": "expected-unsupported",
+      "runtime_profile": false,
+      "required_result": "native-build-fail-closed"
+    }
+  ]
+}
