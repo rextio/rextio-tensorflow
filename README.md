@@ -1,6 +1,6 @@
 # rextio-tensorflow
 
-**Private native-AOT Alpha PoC** (package version **0.1.0**).
+**Public native-AOT Alpha** (package version **0.1.0**, unreleased on PyPI).
 
 This is a Rextio **plugin API 1.3** provider that lowers a **tiny, statically
 proven** subset of Python **TensorFlow 2.21.0 `CPU:0` inference-oriented code** to native Rust
@@ -12,8 +12,8 @@ wheel’s public TFE C API plus a **private** EagerTensor bridge
 | Status field | Value |
 | --- | --- |
 | Version | `0.1.0` (`src/rextio_tensorflow/__about__.py`) |
-| Maturity | Alpha PoC only — **not** for PyPI |
-| Classifier | `Private :: Do Not Upload` |
+| Maturity | Public Alpha PoC — source/CI review in progress; **unreleased on PyPI** |
+| Upload gate | `Private :: Do Not Upload` remains until owner release approval |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
@@ -49,6 +49,13 @@ plugin registration, the generated runtime helper
 | Certified Rust toolchain | `rustc 1.93.1`, `cargo 1.93.1` on `aarch64-apple-darwin` | Used for the current real-Cargo Alpha evidence; this repo has no `rust-toolchain.toml` |
 | Rust TF crates | **None** | `crate_dependencies() == ()`; helpers must not use `tensorflow-sys` / high-level `tensorflow` crate |
 
+The TensorFlow and CPython pins are intentionally exact because this Alpha
+crosses a private eager ABI. A successful install on another version is not a
+support claim. The temporary `Private :: Do Not Upload` classifier is an
+upload safety gate, not a statement that the source repository is private; it
+is removed only from a clean reviewed `main` immediately before an approved
+PyPI release.
+
 ### Platform ABI profiles
 
 The generated runtime selects an explicit **platform ABI profile** at compile
@@ -61,7 +68,7 @@ values mixed into Linux.
 | `macos-arm64` | **Certified** | `aarch64-apple-darwin` | `arm64` | `libtensorflow_cc.2.dylib`, `libtensorflow_framework.2.dylib`, `python/lib_pywrap_tensorflow_common.dylib` | Darwin: `RTLD_NOW=0x2`, `RTLD_LOCAL=0x4`, `RTLD_NOLOAD=0x10` |
 | `linux-x86_64` | **Experimental** | `x86_64-unknown-linux-gnu` (`target_env=gnu` only) | `x86_64` | `libtensorflow_cc.so.2`, `libtensorflow_framework.so.2`, `python/lib_pywrap_tensorflow_common.so` | Linux glibc: `RTLD_NOW=0x2`, `RTLD_LOCAL=0`, `RTLD_NOLOAD=0x4` |
 | `linux-aarch64` | **Experimental** | `aarch64-unknown-linux-gnu` (`target_env=gnu` only) | `aarch64` or `arm64` | same Linux basenames as x86_64 | same Linux glibc values |
-| *(compile_error!)* | **Native-build fail-closed** | Windows, Linux **musl**, and every other triple | n/a | n/a | n/a — clear `compile_error!` at native build (not a runtime dlfcn path) |
+| *(compile_error!)* | **Native-build fail-closed** | Windows, Linux **musl**, macOS x86_64/i686/ARMv7, Linux i686/ARMv7, and every other triple | n/a | n/a | n/a — clear `compile_error!` at native build (not a runtime dlfcn path) |
 
 **Certified** means a real-Cargo E2E path has been run on that profile (macOS
 arm64 only today). **Experimental** means official `tensorflow==2.21.0`
@@ -69,6 +76,34 @@ arm64 only today). **Experimental** means official `tensorflow==2.21.0`
 and exported private bridge symbols, and the runtime profile is wired for
 Linux **GNU** only (`target_env=gnu`). This tree does **not** claim a certified
 real-Cargo Linux E2E or any performance result. Linux **musl** is unsupported.
+
+### Public CI truth matrix
+
+The machine-readable source of truth is
+[`ci/platform-contract.json`](ci/platform-contract.json). Every requested
+Linux/macOS × x86/x64/ARM32/ARM64 cell is present, but only an upstream runtime
+profile can run native E2E. Static platform-contract jobs test the remaining
+cells as expected fail-closed outcomes; they are not emulated support claims.
+
+| Requested cell | Public Alpha result | CI treatment |
+| --- | --- | --- |
+| Linux x86_64 | **Experimental**, release-gated on real Cargo + TF 2.21.0 | Hosted native E2E |
+| Linux AArch64 | **Experimental / availability-gated** | Manual `ubuntu-24.04-arm` native E2E; no claim until green evidence exists |
+| Linux i686 | **Unsupported** — no pinned upstream runtime | Static expected-unsupported / native-build fail-closed |
+| Linux ARMv7 | **Unsupported** — no pinned upstream runtime | Static expected-unsupported / native-build fail-closed |
+| macOS ARM64 | **Certified Alpha baseline** | Hosted native E2E plus existing local real-Cargo evidence |
+| macOS x86_64 | **Availability-gated, currently unsupported** — no exact TF 2.21.0 wheel | Static expected-unsupported / native-build fail-closed |
+| macOS i686 | **Impossible modern target / unsupported** | Static expected-unsupported / native-build fail-closed |
+| macOS ARMv7 | **Impossible modern target / unsupported** | Static expected-unsupported / native-build fail-closed |
+
+The main workflow separates `quality`, `platform-contract`, `native-e2e`, and
+`package` jobs. Native E2E builds and installs the candidate wheel before
+running the real route/lifetime suite; it does not certify an editable source
+checkout. Actions have read-only repository permissions and every
+third-party Action reference is pinned to an immutable commit. Linux AArch64
+is a separate manual experimental workflow so runner availability cannot be
+misrepresented as routine certification. A stable aggregate `ci-gate` job is
+the intended branch-protection check.
 
 On Linux GNU, the generated helper links **libdl** explicitly
 (`#[link(name = "dl")]`) so cdylibs do not rely on incidental global
@@ -395,26 +430,26 @@ def inference(
 
 ---
 
-## Install (development only)
+## Install (public Alpha source)
 
 ```bash
-# CPython 3.11 + tensorflow==2.21.0, e.g. the stage0 venv:
-#   /tmp/rextio-tensorflow-stage0/venv
+# Use CPython 3.11; tensorflow==2.21.0 is an exact package dependency.
 python -m pip install -e ".[dev]"
 ```
 
-Private Alpha: do not upload to PyPI (`Private :: Do Not Upload`).
+The package is not yet on PyPI. Maintainer uploads remain blocked by
+`Private :: Do Not Upload` until the release owner reviews CI, merges to
+`main`, and explicitly removes the gate.
 
 ---
 
 ## Tests
 
 ```bash
-# Unit / contract (no Cargo), including platform ABI profiles:
-pytest tests/test_import_minimal.py tests/test_plugin.py tests/test_claim.py \
-  tests/test_lower.py tests/test_platform_profiles.py -q
+# Unit / contract (no Cargo), including all platform truth cells:
+pytest tests -m "not needs_cargo" -q
 
-# Real-Cargo E2E (serialized; certified macOS arm64 stage0 TF 2.21.0 venv):
+# Real-Cargo E2E (run under CPython 3.11 + TF 2.21.0):
 pytest tests/e2e/test_alpha_real_cargo.py -q
 
 # Opt-in Linux experimental probe (skipped unless env set + Linux host):
@@ -430,9 +465,11 @@ Focused unit tests cover claim accept/reject, lower emission into
 runtime-helper hardening (`RTLD_NOLOAD`, private bridge symbols, no
 `unwrap`/`panic!` in helpers), and **platform ABI profile source contracts**
 (certified macOS arm64, experimental Linux x86_64/aarch64, unsupported/
-Windows fail-closed). The E2E certifies one real native build against
-`/tmp/rextio-tensorflow-stage0/venv` when Cargo and that venv are present
-(**macOS arm64 certified** only). Its single vertical slice is: rank-2 matmul
+Windows/32-bit fail-closed). The E2E uses the invoking CPython 3.11
+environment, requires exact TensorFlow 2.21.0, and fails if the configured
+interpreter or platform contract differs. Existing certification is
+**macOS arm64 only** until the new hosted jobs produce reviewed evidence. Its
+single vertical slice is: rank-2 matmul
 → rank-2 relu → scalar `for`/`if` selecting relu/sigmoid → rank-2 + rank-1
 bias → axis-1 mean. Other aliases and supported add rank pairs are covered at
 the unit claim/lower layer, not by separate real-Cargo fixtures. The Linux
@@ -447,12 +484,17 @@ probe is opt-in and does not claim certification when it has not been run.
 | Name | `rextio-tensorflow` |
 | Version | `0.1.0` |
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
-| Classifier | `Private :: Do Not Upload` |
+| Upload gate | `Private :: Do Not Upload` until release approval |
 | License | MIT |
 
-This is the private `rextio/rextio-tensorflow` incubation repository. It has no
-release tag or PyPI publication; visibility and publishing remain separate
-owner-reviewed release gates.
+The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
+and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
+`ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
+wheel metadata.
+
+This is the public Alpha source for `rextio/rextio-tensorflow`. It has no
+release tag or PyPI publication yet; repository visibility and package
+publishing remain separate owner-reviewed release gates.
 
 For the intended Alpha architecture and staged scope, see the
 [0.1.0 implementation plan](docs/implementation-plan-0.1.0.md). Release-facing

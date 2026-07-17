@@ -1,6 +1,6 @@
 # rextio-tensorflow 0.1.0 implementation plan
 
-Status: private local Alpha PoC
+Status: public Alpha source candidate; unreleased on PyPI; upload-gated
 
 ## Product definition
 
@@ -40,6 +40,13 @@ Common logic never assumes Darwin-only paths or Darwin `dlfcn` numeric values.
 | `linux-x86_64` (`target_env=gnu`) | experimental | `libtensorflow_cc.so.2`, `libtensorflow_framework.so.2`, `python/lib_pywrap_tensorflow_common.so` | Linux glibc `0x4` |
 | `linux-aarch64` (`target_env=gnu`) | experimental | same Linux basenames | Linux glibc `0x4` |
 | Windows / musl / other | **compile_error!** | n/a | n/a |
+
+The requested Linux/macOS × x86/x64/ARM32/ARM64 truth table is maintained in
+`ci/platform-contract.json`. Linux i686/ARMv7 and modern macOS i686/ARMv7 are
+expected-unsupported; macOS x86_64 is availability-gated but currently fails
+closed because the exact pinned upstream wheel is absent. These cells receive
+static contract jobs, not fake native E2E. Linux AArch64 remains a manual
+experimental job until public-runner and end-to-end evidence are reviewed.
 
 Linux GNU builds also `#[link(name = "dl")]` the dlfcn extern block so older
 manylinux/glibc toolchains do not rely on incidental global `libdl` resolution.
@@ -156,11 +163,15 @@ revalidates independently with `ValueError` (not `assert`).
 
 - Focused unit tests: import-minimal, plugin contract, claim, lower, platform
   ABI profiles / unsupported targets
-- One real-Cargo E2E against `/tmp/rextio-tensorflow-stage0/venv` (macOS arm64
-  certified)
+- One real-Cargo E2E under the invoking CPython 3.11 + TensorFlow 2.21.0
+  environment (macOS arm64 currently certified)
 - Opt-in Linux experimental probe (`REXTIO_TF_LINUX_PROBE=1`) when accurate
-- Ruff, mypy, package build/check as available
-- No remotes/tags/PyPI; no `AGENTS.md`; no commit required for the Alpha drop
+- Read-only GitHub Actions jobs for quality, all platform truth cells,
+  runtime-backed candidate-wheel native E2E, wheel/sdist/fresh-install
+  packaging, and a stable aggregate `ci-gate` branch-protection check
+- Ruff, mypy, package build/check
+- No tag/PyPI until owner approval; `Private :: Do Not Upload` remains the
+  temporary upload gate and is removed only from reviewed merged `main`
 
 ## Residual ABI risks
 

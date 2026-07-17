@@ -1,9 +1,11 @@
 """One real-Cargo E2E certification for the Alpha TF inference slice.
 
 Uses the core certification kit with the entry-point-discoverable plugin.
-Build/run against ``/tmp/rextio-tensorflow-stage0/venv`` (TensorFlow 2.21.0).
-TensorFlow must be imported before the generated native extension loads so
-TFE symbols resolve from the already-loaded wheel dylibs.
+The invoking interpreter must be CPython 3.11 with TensorFlow 2.21.0.  CI and
+local callers may set ``REXTIO_TF_E2E_PYTHON`` explicitly; otherwise the
+current interpreter is used. TensorFlow must be imported before the generated
+native extension loads so TFE symbols resolve from the already-loaded wheel
+images.
 """
 
 from __future__ import annotations
@@ -20,9 +22,8 @@ from rextio.plugins.testing import CertifiedProject, build_certification_project
 
 from rextio_tensorflow.diagnostics import RUNTIME_ERRORS
 
-STAGE0_VENV = Path("/tmp/rextio-tensorflow-stage0/venv")
-STAGE0_PYTHON = STAGE0_VENV / "bin" / "python"
-PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+E2E_PYTHON = Path(os.environ.get("REXTIO_TF_E2E_PYTHON", sys.executable)).expanduser().absolute()
+SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src"
 
 pytestmark = [
     pytest.mark.needs_cargo,
@@ -31,8 +32,8 @@ pytestmark = [
         reason="real-Cargo certification requires cargo on PATH",
     ),
     pytest.mark.skipif(
-        not STAGE0_PYTHON.is_file(),
-        reason=f"stage0 venv missing: {STAGE0_PYTHON}",
+        not E2E_PYTHON.is_file(),
+        reason="configured E2E Python interpreter is unavailable",
     ),
 ]
 
@@ -60,19 +61,26 @@ def inference(
 """
 
 
-def _configure_stage0_env() -> None:
-    """Pin PATH / VIRTUAL_ENV / PYO3_PYTHON to the stage0 CPython 3.11 + TF 2.21 venv."""
-    os.environ["VIRTUAL_ENV"] = str(STAGE0_VENV)
-    os.environ["PATH"] = f"{STAGE0_VENV / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"
-    os.environ["PYO3_PYTHON"] = str(STAGE0_PYTHON)
-    # Fail closed if PATH resolves a mismatched TensorFlow.
+def _configure_e2e_env() -> None:
+    """Pin build subprocesses to the invoking CPython 3.11 + TF 2.21 environment."""
+    assert sys.version_info[:2] == (3, 11), "real-Cargo E2E requires CPython 3.11"
+    assert Path(sys.executable).absolute() == E2E_PYTHON, (
+        "run pytest with the same interpreter named by REXTIO_TF_E2E_PYTHON"
+    )
+    e2e_bin = E2E_PYTHON.parent
+    os.environ["VIRTUAL_ENV"] = str(Path(sys.prefix).resolve())
+    os.environ["PATH"] = f"{e2e_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+    os.environ["PYO3_PYTHON"] = str(E2E_PYTHON)
+    # Fail closed if the configured interpreter resolves a mismatched runtime.
     import subprocess
 
     probe = subprocess.run(
         [
-            "python",
+            str(E2E_PYTHON),
             "-c",
-            "import tensorflow as tf; print(tf.__version__); print(tf.__file__)",
+            "import platform, sys, tensorflow as tf; "
+            "print(sys.implementation.name); print(sys.version_info[0], sys.version_info[1]); "
+            "print(tf.__version__); print(platform.system()); print(platform.machine())",
         ],
         check=False,
         capture_output=True,
@@ -81,8 +89,15 @@ def _configure_stage0_env() -> None:
     )
     assert probe.returncode == 0, probe.stderr
     lines = [line.strip() for line in probe.stdout.strip().splitlines() if line.strip()]
-    assert lines[0] == "2.21.0", f"stage0 python must report TF 2.21.0; got {lines[0]!r}"
-    assert "tensorflow" in lines[1]
+    assert lines[0] == "cpython", f"E2E requires CPython; got {lines[0]!r}"
+    assert lines[1] == "3 11", f"E2E requires CPython 3.11; got {lines[1]!r}"
+    assert lines[2] == "2.21.0", f"E2E requires TF 2.21.0; got {lines[2]!r}"
+    assert (lines[3], lines[4]) in {
+        ("Darwin", "arm64"),
+        ("Linux", "x86_64"),
+        ("Linux", "aarch64"),
+        ("Linux", "arm64"),
+    }, f"unsupported E2E platform: {(lines[3], lines[4])!r}"
 
 
 def _import_tf():
@@ -93,7 +108,14 @@ def _import_tf():
 
 @pytest.fixture(scope="module")
 def project(tmp_path_factory: pytest.TempPathFactory) -> CertifiedProject:
-    _configure_stage0_env()
+    _configure_e2e_env()
+    if os.environ.get("REXTIO_TF_REQUIRE_INSTALLED_WHEEL") == "1":
+        import rextio_tensorflow
+
+        package_file = Path(rextio_tensorflow.__file__).resolve()
+        assert SOURCE_ROOT.resolve() not in package_file.parents, (
+            f"native E2E must import the installed wheel, not {SOURCE_ROOT}"
+        )
     # Import TF in this process before the native extension is ever loaded.
     _import_tf()
 
@@ -107,14 +129,8 @@ def project(tmp_path_factory: pytest.TempPathFactory) -> CertifiedProject:
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "kernels.py").write_text(KERNELS, encoding="utf-8")
 
-    # Make the plugin discoverable: install editable path via PYTHONPATH and
-    # entry-point registration through a site .pth is not required when using
-    # build_certification_project with the installed package. Prefer editable
-    # install into stage0 when missing.
-    src = str(PLUGIN_ROOT / "src")
-    os.environ["PYTHONPATH"] = os.pathsep.join(
-        [src, os.environ.get("PYTHONPATH", "")]
-    )
+    # Plugin discovery must use the distribution entry point. CI installs the
+    # freshly built wheel; local development may use an editable install.
     return build_certification_project(root)
 
 
