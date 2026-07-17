@@ -21,9 +21,8 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
   "Topic :: Software Development :: Build Tools",
-  "Private :: Do Not Upload",
 ]
-# Public Alpha upload gate: no abandoned high-level tensorflow Rust crate. Native code
+# Public Alpha: no abandoned high-level tensorflow Rust crate. Native code
 # dlopens the active Python tensorflow==2.21.0 wheel (TFE C API + private
 # EagerTensor bridge). Discovery stays import-minimal (never imports TF).
 dependencies = [

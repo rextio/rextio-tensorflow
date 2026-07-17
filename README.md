@@ -1,6 +1,6 @@
 # rextio-tensorflow
 
-**Public native-AOT Alpha** (package version **0.1.0**, unreleased on PyPI).
+**Public native-AOT Alpha 0.1.0** (release dated **2026-07-18**).
 
 This is a Rextio **plugin API 1.3** provider that lowers a **tiny, statically
 proven** subset of Python **TensorFlow 2.21.0 `CPU:0` inference-oriented code** to native Rust
@@ -12,8 +12,8 @@ wheel’s public TFE C API plus a **private** EagerTensor bridge
 | Status field | Value |
 | --- | --- |
 | Version | `0.1.0` (`src/rextio_tensorflow/__about__.py`) |
-| Maturity | Public Alpha PoC — source/CI review in progress; **unreleased on PyPI** |
-| Upload gate | `Private :: Do Not Upload` remains until owner release approval |
+| Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
+| Release state | 0.1.0 metadata/artifacts approved; PyPI publication is not claimed until live verification |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
@@ -51,10 +51,9 @@ plugin registration, the generated runtime helper
 
 The TensorFlow and CPython pins are intentionally exact because this Alpha
 crosses a private eager ABI. A successful install on another version is not a
-support claim. The temporary `Private :: Do Not Upload` classifier is an
-upload safety gate, not a statement that the source repository is private; it
-is removed only from a clean reviewed `main` immediately before an approved
-PyPI release.
+support claim. Release metadata uses the standard
+`Development Status :: 3 - Alpha` classifier; source availability and a dated
+release do not broaden the certified runtime profiles below.
 
 ### Platform ABI profiles
 
@@ -87,7 +86,7 @@ cells as expected fail-closed outcomes; they are not emulated support claims.
 
 | Requested cell | Public Alpha result | CI treatment |
 | --- | --- | --- |
-| Linux x86_64 | **Experimental**, release-gated on real Cargo + TF 2.21.0 | Hosted native E2E |
+| Linux x86_64 | **Experimental**; merged PR #1 passed real Cargo + TF 2.21.0 candidate-wheel E2E | Hosted native E2E remains a release gate |
 | Linux AArch64 | **Experimental / availability-gated** | Manual `ubuntu-24.04-arm` native E2E; no claim until green evidence exists |
 | Linux i686 | **Unsupported** — no pinned upstream runtime | Static expected-unsupported / native-build fail-closed |
 | Linux ARMv7 | **Unsupported** — no pinned upstream runtime | Static expected-unsupported / native-build fail-closed |
@@ -430,16 +429,17 @@ def inference(
 
 ---
 
-## Install (public Alpha source)
+## Install
 
 ```bash
 # Use CPython 3.11; tensorflow==2.21.0 is an exact package dependency.
 python -m pip install -e ".[dev]"
 ```
 
-The package is not yet on PyPI. Maintainer uploads remain blocked by
-`Private :: Do Not Upload` until the release owner reviews CI, merges to
-`main`, and explicitly removes the gate.
+This release-preparation commit does not claim that the PyPI upload is live.
+Until a live no-cache installation is verified, install from the reviewed
+source or approved wheel artifact. The exact CPython 3.11 and TensorFlow
+2.21.0 requirements still apply.
 
 ---
 
@@ -467,9 +467,11 @@ runtime-helper hardening (`RTLD_NOLOAD`, private bridge symbols, no
 (certified macOS arm64, experimental Linux x86_64/aarch64, unsupported/
 Windows/32-bit fail-closed). The E2E uses the invoking CPython 3.11
 environment, requires exact TensorFlow 2.21.0, and fails if the configured
-interpreter or platform contract differs. Existing certification is
-**macOS arm64 only** until the new hosted jobs produce reviewed evidence. Its
-single vertical slice is: rank-2 matmul
+interpreter or platform contract differs. Merged PR #1 produced hosted
+candidate-wheel real-Cargo evidence on macOS ARM64 and Linux x86_64. The
+declared certification class remains **macOS ARM64 only**; Linux stays
+experimental pending a separate support-promotion decision. The vertical
+slice is: rank-2 matmul
 → rank-2 relu → scalar `for`/`if` selecting relu/sigmoid → rank-2 + rank-1
 bias → axis-1 mean. Other aliases and supported add rank pairs are covered at
 the unit claim/lower layer, not by separate real-Cargo fixtures. The Linux
@@ -484,7 +486,9 @@ probe is opt-in and does not claim certification when it has not been run.
 | Name | `rextio-tensorflow` |
 | Version | `0.1.0` |
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
-| Upload gate | `Private :: Do Not Upload` until release approval |
+| Classifier | `Development Status :: 3 - Alpha` |
+| Release date | `2026-07-18` |
+| Distribution state | Artifacts approved; live PyPI publication pending verification |
 | License | MIT |
 
 The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
@@ -492,9 +496,10 @@ and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
 `ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
 wheel metadata.
 
-This is the public Alpha source for `rextio/rextio-tensorflow`. It has no
-release tag or PyPI publication yet; repository visibility and package
-publishing remain separate owner-reviewed release gates.
+This is the dated public Alpha 0.1.0 source for
+`rextio/rextio-tensorflow`. Tagging and PyPI upload/live-install verification
+are separate deployment steps and are not claimed by this release-preparation
+commit.
 
 For the intended Alpha architecture and staged scope, see the
 [0.1.0 implementation plan](docs/implementation-plan-0.1.0.md). Release-facing
