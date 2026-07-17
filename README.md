@@ -13,10 +13,16 @@ wheel’s public TFE C API plus a **private** EagerTensor bridge
 | --- | --- |
 | Version | `0.1.0` (`src/rextio_tensorflow/__about__.py`) |
 | Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
-| Release state | 0.1.0 metadata/artifacts approved; PyPI publication is not claimed until live verification |
+| Release state | **Tagged and live on PyPI** — [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
+
+Final release verification completed on 2026-07-18: GitHub Actions
+[run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
+finished **13/13 jobs successfully**, and a no-cache CPython 3.11 install from
+PyPI resolved `tensorflow==2.21.0` and exposed the plugin entry point with API
+**1.3** metadata. This is release evidence, not a performance claim.
 
 Unsupported call sites stay on Rextio’s ordinary **Python fallback** at
 analysis time. Sites that *are* claimed and lowered native still **fail closed
@@ -432,14 +438,17 @@ def inference(
 ## Install
 
 ```bash
-# Use CPython 3.11; tensorflow==2.21.0 is an exact package dependency.
+# Published package (CPython 3.11 only; installs tensorflow==2.21.0 exactly):
+python -m pip install --no-cache-dir "rextio-tensorflow==0.1.0"
+
+# Source contributors:
 python -m pip install -e ".[dev]"
 ```
 
-This release-preparation commit does not claim that the PyPI upload is live.
-Until a live no-cache installation is verified, install from the reviewed
-source or approved wheel artifact. The exact CPython 3.11 and TensorFlow
-2.21.0 requirements still apply.
+The published package was verified in a fresh CPython 3.11 environment with
+the exact TensorFlow 2.21.0 dependency and plugin API 1.3 entry-point metadata.
+The exact CPython, TensorFlow, ABI, and platform requirements above still
+apply.
 
 ---
 
@@ -488,7 +497,7 @@ probe is opt-in and does not claim certification when it has not been run.
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
 | Classifier | `Development Status :: 3 - Alpha` |
 | Release date | `2026-07-18` |
-| Distribution state | Artifacts approved; live PyPI publication pending verification |
+| Distribution state | [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) live on PyPI; annotated tag `0.1.0` |
 | License | MIT |
 
 The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
@@ -496,10 +505,16 @@ and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
 `ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
 wheel metadata.
 
-This is the dated public Alpha 0.1.0 source for
-`rextio/rextio-tensorflow`. Tagging and PyPI upload/live-install verification
-are separate deployment steps and are not claimed by this release-preparation
-commit.
+This is the tagged public Alpha 0.1.0 source for
+`rextio/rextio-tensorflow`, released on GitHub and PyPI. Final CI run
+`29597803215` completed 13/13 jobs successfully, followed by the verified
+no-cache CPython 3.11 installation described above.
+
+The long description attached to the already-uploaded PyPI 0.1.0 artifacts was
+frozen from the pre-live candidate README and cannot be changed in place. It
+may therefore retain release-pending wording; this GitHub README records the
+verified post-release state. A future package version will carry the updated
+long description.
 
 For the intended Alpha architecture and staged scope, see the
 [0.1.0 implementation plan](docs/implementation-plan-0.1.0.md). Release-facing
