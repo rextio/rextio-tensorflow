@@ -3,16 +3,16 @@
 All notable changes to `rextio-tensorflow` are documented here following Keep a
 Changelog and Semantic Versioning conventions.
 
-## [0.1.0] — Public Alpha (unreleased / upload-gated)
+## [0.1.0] — 2026-07-18
 
-Public Alpha source candidate. Package remains unpublished and protected by
-the temporary `Private :: Do Not Upload` release gate. No performance
-benchmark gate.
+Public native-AOT Alpha release. Metadata and artifacts are approved for the
+0.1.0 release; live PyPI publication is not claimed until the deployment and
+no-cache install verification complete. No performance benchmark gate.
 
 ### Added
 
-- Public Alpha package scaffold for Rextio plugin API **1.3**, retaining
-  `Private :: Do Not Upload` only until owner-approved release preparation.
+- Public Alpha package for Rextio plugin API **1.3** with standard Alpha
+  metadata and no private-upload classifier.
 - Frozen baseline: CPython `>=3.11,<3.12`, `tensorflow==2.21.0`,
   `rextio>=0.1.3,<0.2`, CPU float32 rank-1/2, inference only.
 - **Platform ABI profiles** in the generated runtime helper:
@@ -65,7 +65,9 @@ benchmark gate.
   hook and is not claimed by this release.
 - Linux experimental support is based on offline inspection of official
   `tensorflow==2.21.0` manylinux wheels; it is **not** a performance promise
-  and is **not** certified real-Cargo E2E evidence.
+  and is **not** a certified support claim. The merged release PR passed
+  candidate-wheel real-Cargo E2E on Linux x86_64; Linux AArch64 remains
+  artifact-verified/manual, and both Linux profiles remain experimental.
 - The exact private eager bridge and eager-context ABI remains prominently
   disclosed; runtime mismatch, `RTLD_NOLOAD` failure, or per-image provenance
   failure remains fail-closed with no transparent Python replay.

@@ -1,6 +1,7 @@
 # rextio-tensorflow 0.1.0 implementation plan
 
-Status: public Alpha source candidate; unreleased on PyPI; upload-gated
+Status: public Alpha 0.1.0 release dated 2026-07-18; artifacts approved; live
+PyPI verification pending
 
 ## Product definition
 
@@ -170,15 +171,19 @@ revalidates independently with `ValueError` (not `assert`).
   runtime-backed candidate-wheel native E2E, wheel/sdist/fresh-install
   packaging, and a stable aggregate `ci-gate` branch-protection check
 - Ruff, mypy, package build/check
-- No tag/PyPI until owner approval; `Private :: Do Not Upload` remains the
-  temporary upload gate and is removed only from reviewed merged `main`
+- Standard `Development Status :: 3 - Alpha` metadata with no private-upload
+  classifier
+- Tagging, PyPI upload, and live no-cache installation are separate deployment
+  steps; this release-preparation commit does not claim they have completed
 
 ## Residual ABI risks
 
 1. **Private bridge stability** — `EagerTensor_*` symbols and EagerTensor
    object layout are private ABI; a patch release of TF may break them even at
-   2.21.x. Linux experimental profiles share the same mangled names as macOS
-   (artifact-verified) but lack certified real-Cargo E2E in this tree.
+   2.21.x. Linux experimental profiles share the same mangled names as macOS.
+   Linux x86_64 passed hosted candidate-wheel real-Cargo E2E for the merged
+   release PR but remains experimental; Linux AArch64 is artifact-verified and
+   availability-gated/manual.
 2. **`TFE_TensorHandleCopySharingTensor` identity** — some builds return the
    same pointer with a refcount bump; ownership accounting must treat that as
    valid owned share, not a distinct allocation.
