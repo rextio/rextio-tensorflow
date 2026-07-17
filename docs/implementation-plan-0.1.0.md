@@ -1,7 +1,8 @@
 # rextio-tensorflow 0.1.0 implementation plan
 
-Status: public Alpha 0.1.0 release dated 2026-07-18; artifacts approved; live
-PyPI verification pending
+Status: **released** public Alpha 0.1.0 dated 2026-07-18; tag `0.1.0` and
+[`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/)
+are live
 
 ## Product definition
 
@@ -173,8 +174,18 @@ revalidates independently with `ValueError` (not `assert`).
 - Ruff, mypy, package build/check
 - Standard `Development Status :: 3 - Alpha` metadata with no private-upload
   classifier
-- Tagging, PyPI upload, and live no-cache installation are separate deployment
-  steps; this release-preparation commit does not claim they have completed
+- Annotated tag `0.1.0` and the PyPI 0.1.0 distribution are live
+- Final GitHub Actions run
+  [`29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
+  completed **13/13 jobs successfully**
+- A no-cache CPython 3.11 install from PyPI resolved
+  `tensorflow==2.21.0` and plugin API **1.3** entry-point metadata
+- No performance benchmark gate or speedup claim
+
+The long description attached to the already-uploaded PyPI 0.1.0 artifacts was
+frozen from the pre-live candidate README and cannot be changed in place. The
+current GitHub README is the post-release status authority; a future package
+version will carry the updated long description.
 
 ## Residual ABI risks
 

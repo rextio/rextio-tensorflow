@@ -5,9 +5,9 @@ Changelog and Semantic Versioning conventions.
 
 ## [0.1.0] — 2026-07-18
 
-Public native-AOT Alpha release. Metadata and artifacts are approved for the
-0.1.0 release; live PyPI publication is not claimed until the deployment and
-no-cache install verification complete. No performance benchmark gate.
+Public native-AOT Alpha release, tagged and live on PyPI as
+[`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/).
+No performance benchmark gate or speedup claim.
 
 ### Added
 
@@ -58,6 +58,14 @@ no-cache install verification complete. No performance benchmark gate.
 
 ### Notes
 
+- Final GitHub Actions
+  [run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
+  completed **13/13 jobs successfully**.
+- A live no-cache CPython 3.11 install from PyPI resolved
+  `tensorflow==2.21.0` and exposed plugin API **1.3** entry-point metadata.
+- The already-uploaded 0.1.0 PyPI long description was frozen from the
+  pre-live candidate README and cannot be changed in place; the current GitHub
+  README records the verified release state.
 - Does **not** depend on the abandoned high-level TensorFlow Rust crate;
   `tensorflow-sys` is reference-only, not a Cargo dependency.
 - Runtime incompatibility raises a fail-closed native exception in Alpha;
