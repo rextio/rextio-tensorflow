@@ -171,6 +171,7 @@ jobs:
       - name: Build and inspect distributions
         run: |
           python -m build
+          python ci/check_sdist_contract.py dist/*.tar.gz
           python -m twine check dist/*
           check-wheel-contents dist/*.whl
       - name: Fresh-install wheel with exact runtime dependency
