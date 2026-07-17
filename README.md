@@ -36,7 +36,7 @@ plugin registration, the generated runtime helper
 | --- | --- | --- |
 | Package version | `0.1.0` | `__about__.__version__` |
 | CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
-| Platform (Alpha PoC) | **macOS arm64** (`aarch64-apple-darwin`) | Runtime `validate_platform` (`cfg!(target_os="macos", target_arch="aarch64")` + `platform.machine() == "arm64"`) |
+| Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
 | Rextio package | **`>=0.1.3,<0.2`** | Allowed package range in `pyproject.toml`, not an exact package pin |
 | Plugin API | **1.3** (`REQUIRED_PLUGIN_API = "1.3"`) | `plugin.py`; loader contract tests |
 | TensorFlow (Python) | **`tensorflow==2.21.0`** | `pyproject.toml` dependency; runtime checks `tf.__version__` |
@@ -49,13 +49,52 @@ plugin registration, the generated runtime helper
 | Certified Rust toolchain | `rustc 1.93.1`, `cargo 1.93.1` on `aarch64-apple-darwin` | Used for the current real-Cargo Alpha evidence; this repo has no `rust-toolchain.toml` |
 | Rust TF crates | **None** | `crate_dependencies() == ()`; helpers must not use `tensorflow-sys` / high-level `tensorflow` crate |
 
+### Platform ABI profiles
+
+The generated runtime selects an explicit **platform ABI profile** at compile
+time (loader flags, wheel image basenames, Python `platform.machine()` tags).
+Common load logic never assumes Darwin-only paths or Darwin `dlfcn` numeric
+values mixed into Linux.
+
+| Profile id | Class | Target triple (Rust) | Python machines | Wheel images (relative to `tensorflow` package root) | `dlopen` flags (numeric) |
+| --- | --- | --- | --- | --- | --- |
+| `macos-arm64` | **Certified** | `aarch64-apple-darwin` | `arm64` | `libtensorflow_cc.2.dylib`, `libtensorflow_framework.2.dylib`, `python/lib_pywrap_tensorflow_common.dylib` | Darwin: `RTLD_NOW=0x2`, `RTLD_LOCAL=0x4`, `RTLD_NOLOAD=0x10` |
+| `linux-x86_64` | **Experimental** | `x86_64-unknown-linux-gnu` (`target_env=gnu` only) | `x86_64` | `libtensorflow_cc.so.2`, `libtensorflow_framework.so.2`, `python/lib_pywrap_tensorflow_common.so` | Linux glibc: `RTLD_NOW=0x2`, `RTLD_LOCAL=0`, `RTLD_NOLOAD=0x4` |
+| `linux-aarch64` | **Experimental** | `aarch64-unknown-linux-gnu` (`target_env=gnu` only) | `aarch64` or `arm64` | same Linux basenames as x86_64 | same Linux glibc values |
+| *(compile_error!)* | **Native-build fail-closed** | Windows, Linux **musl**, and every other triple | n/a | n/a | n/a — clear `compile_error!` at native build (not a runtime dlfcn path) |
+
+**Certified** means a real-Cargo E2E path has been run on that profile (macOS
+arm64 only today). **Experimental** means official `tensorflow==2.21.0`
+**manylinux / glibc** wheel archives were inspected offline for image layout
+and exported private bridge symbols, and the runtime profile is wired for
+Linux **GNU** only (`target_env=gnu`). This tree does **not** claim a certified
+real-Cargo Linux E2E or any performance result. Linux **musl** is unsupported.
+
+On Linux GNU, the generated helper links **libdl** explicitly
+(`#[link(name = "dl")]`) so cdylibs do not rely on incidental global
+resolution of `dlopen`/`dlsym` on older manylinux/glibc.
+
+Inspected wheels (download-only; not installed into the host environment):
+
+- `tensorflow-2.21.0-cp311-cp311-macosx_12_0_arm64.whl`
+- `tensorflow-2.21.0-cp311-cp311-manylinux_2_27_x86_64.whl`
+- `tensorflow-2.21.0-cp311-cp311-manylinux_2_27_aarch64.whl`
+
+Windows support is **explicitly deferred**. Unsupported compile targets
+(Windows, musl, other) fail closed at **native build** via `compile_error!`
+because the POSIX `dlfcn` externs are not a truthful runtime contract there.
+Runtime availability failures on supported profiles still never silently retry
+the Python body under plugin API 1.3 (no runtime-availability hook).
+
 ### Why a private ABI exists
 
 Public TFE C symbols alone are not enough to round-trip Python
 `tf.Tensor` / EagerTensor objects at the function boundary without host
 resolve. The Alpha runtime therefore also resolves **private** bridge
-symbols from the **2.21.0 macOS arm64** wheel image
-`python/lib_pywrap_tensorflow_common.dylib` (Itanium-mangled names):
+symbols from the active wheel’s pywrap image
+(`python/lib_pywrap_tensorflow_common.{dylib,so}`; Itanium-mangled names).
+Artifact-level `nm` of the three official 2.21.0 wheels above confirms the
+**same** three exports on macOS arm64 and Linux x86_64/aarch64:
 
 | Private symbol (mangled) | Role |
 | --- | --- |
@@ -208,17 +247,22 @@ Fallback rule record: `rextio-tensorflow/unsupported-tensor-surface`
 
 The generated runtime binds **only** images already loaded by the active
 `tensorflow==2.21.0` process — it does **not** load a second TensorFlow.
+It never uses `RTLD_DEFAULT` or a process-global symbol search as a substitute
+for per-image `dlsym` + `dladdr` provenance.
 
 On first API load (`Api::load`):
 
-1. Require CPython 3.11 + macOS arm64 and Python `tf.__version__ == "2.21.0"`.
-2. Canonicalize the three active-wheel dylib paths under the package root:
-   - `libtensorflow_cc.2.dylib`
-   - `libtensorflow_framework.2.dylib`
-   - `python/lib_pywrap_tensorflow_common.dylib`
+1. Compile only for a supported `PlatformAbiProfile` (else `compile_error!`).
+   At runtime require CPython 3.11, a matching `platform.machine()`, and Python
+   `tf.__version__ == "2.21.0"`.
+2. Canonicalize the three active-wheel library paths under the package root
+   using the profile’s basenames (`.dylib` on certified macOS arm64; `.so.2`
+   / `.so` on experimental Linux GNU).
 3. Open each path only with
-   **`RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD`**.
-   Missing image → error (never an instruction to load another copy).
+   **`RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD`** using **OS-specific numeric
+   values** (Darwin `RTLD_NOLOAD=0x10` vs Linux glibc `RTLD_NOLOAD=0x4`;
+   Linux `RTLD_LOCAL=0`). Missing image → error (never an instruction to load
+   another copy).
 4. Resolve each symbol from its **owning** image (`cc` / `framework` / `pywrap`)
    and verify provenance with **`dladdr`**.
 5. Require `TF_Version() == "2.21.0"`, import
@@ -229,7 +273,7 @@ On first API load (`Api::load`):
 
 The caller does not have to pre-import TensorFlow: lazy runtime initialization
 calls `py.import("tensorflow")`. By the time `RTLD_NOLOAD` runs, however, the
-three expected dylibs from that exact active wheel must be mapped. If the
+three expected images from that exact active wheel must be mapped. If the
 imported wheel does not map them, initialization fails closed rather than
 loading a second TensorFlow runtime.
 
@@ -341,7 +385,8 @@ def inference(
   `TFE_TensorHandleCopySharingTensor` (no host resolve).
 - Materialize: `EagerTensorFromHandle(..., is_packed=false)` **takes ownership**.
 - Exact Python `tensorflow.__version__` and C `TF_Version()` must both be
-  `2.21.0`; dylibs opened only with `RTLD_NOLOAD` from the active wheel.
+  `2.21.0`; active-wheel images opened only with profile
+  `RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD` (OS-specific numeric values).
 - Reuses the existing Python eager context capsule. **No** `TFE_NewContext`,
   **no** Session, **no** DLPack, **no** `TFE_TensorHandleResolve` on the
   inference path.
@@ -365,22 +410,33 @@ Private Alpha: do not upload to PyPI (`Private :: Do Not Upload`).
 ## Tests
 
 ```bash
-# Unit / contract (no Cargo):
-pytest tests/test_import_minimal.py tests/test_plugin.py tests/test_claim.py tests/test_lower.py -q
+# Unit / contract (no Cargo), including platform ABI profiles:
+pytest tests/test_import_minimal.py tests/test_plugin.py tests/test_claim.py \
+  tests/test_lower.py tests/test_platform_profiles.py -q
 
-# Real-Cargo E2E (serialized; uses stage0 TF 2.21.0 venv):
+# Real-Cargo E2E (serialized; certified macOS arm64 stage0 TF 2.21.0 venv):
 pytest tests/e2e/test_alpha_real_cargo.py -q
+
+# Opt-in Linux experimental probe (skipped unless env set + Linux host):
+REXTIO_TF_LINUX_PROBE=1 pytest tests/e2e/test_linux_experimental_probe.py -q
+
+# Lint / types (when the dev extra is installed):
+ruff check src tests
+mypy src
 ```
 
 Focused unit tests cover claim accept/reject, lower emission into
 `rextio_tensorflow_runtime`, plugin API 1.3 loader contract, empty crate deps,
-and runtime-helper hardening (`RTLD_NOLOAD`, private bridge symbols, no
-`unwrap`/`panic!` in helpers). The E2E certifies one real native build against
-`/tmp/rextio-tensorflow-stage0/venv` when Cargo and that venv are present. Its
-single vertical slice is: rank-2 matmul → rank-2 relu → scalar `for`/`if`
-selecting relu/sigmoid → rank-2 + rank-1 bias → axis-1 mean. Other aliases and
-supported add rank pairs are covered at the unit claim/lower layer, not by
-separate real-Cargo fixtures.
+runtime-helper hardening (`RTLD_NOLOAD`, private bridge symbols, no
+`unwrap`/`panic!` in helpers), and **platform ABI profile source contracts**
+(certified macOS arm64, experimental Linux x86_64/aarch64, unsupported/
+Windows fail-closed). The E2E certifies one real native build against
+`/tmp/rextio-tensorflow-stage0/venv` when Cargo and that venv are present
+(**macOS arm64 certified** only). Its single vertical slice is: rank-2 matmul
+→ rank-2 relu → scalar `for`/`if` selecting relu/sigmoid → rank-2 + rank-1
+bias → axis-1 mean. Other aliases and supported add rank pairs are covered at
+the unit claim/lower layer, not by separate real-Cargo fixtures. The Linux
+probe is opt-in and does not claim certification when it has not been run.
 
 ---
 
@@ -414,5 +470,6 @@ current support contract.
 3. **Not a performance product** — **no** speedup claim and **no** benchmark
    release gate for 0.1.0.
 4. **Not a stable public ABI** — private EagerTensor bridge symbols and exact
-   eager-context internals plus exact 2.21.0 / macOS arm64 / CPython 3.11 pins
-   are intentional Alpha constraints.
+   eager-context internals plus exact 2.21.0 / CPython 3.11 pins and the
+   certified-vs-experimental platform profiles are intentional Alpha
+   constraints. Windows remains deferred.

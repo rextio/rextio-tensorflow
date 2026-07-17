@@ -216,10 +216,16 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     assert "EagerTensor_Handle" in rust or "_Z18EagerTensor_Handle" in rust
     assert "TFE_Execute" in rust
     assert "RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD" in rust
+    assert "PlatformAbiProfile" in rust
     assert "dladdr" in rust
+    # Certified macOS profile still present; Linux experimental profiles too.
     assert "libtensorflow_cc.2.dylib" in rust
     assert "libtensorflow_framework.2.dylib" in rust
     assert "lib_pywrap_tensorflow_common.dylib" in rust
+    assert "libtensorflow_cc.so.2" in rust
+    assert "lib_pywrap_tensorflow_common.so" in rust
+    assert 'support_class: "certified"' in rust
+    assert 'support_class: "experimental"' in rust
     assert "TFE_TensorHandleBackingDeviceName" in rust
     assert "TFE_OpSetDevice" in rust
     assert 'set_bool("grad_a", false)' in rust

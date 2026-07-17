@@ -58,7 +58,9 @@ def test_lower_matmul_targets_runtime_module() -> None:
 def test_runtime_helper_has_same_wheel_and_ownership_hardening() -> None:
     helper = runtime_module_helpers()
     assert "RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD" in helper
-    assert 'dlopen(c_path.as_ptr(), TF_DLOPEN_FLAGS)' in helper
+    assert "dlopen(c_path.as_ptr(), flags)" in helper
+    assert "tf_dlopen_flags" in helper
+    assert "PlatformAbiProfile" in helper
     assert "dladdr" in helper
     assert "canonicalize" in helper
     assert 'cc.resolve("TFE_NewOp")' in helper

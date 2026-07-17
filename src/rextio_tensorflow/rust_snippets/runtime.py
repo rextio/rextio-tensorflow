@@ -30,19 +30,146 @@ mod rextio_tensorflow_runtime {
     const TF_INT32: c_int = 3;
     const EXPECTED_TF_VERSION: &str = "2.21.0";
 
-    // Darwin dlfcn flags. RTLD_NOLOAD is the essential same-runtime gate: a
-    // missing image is an error, never an instruction to load another copy.
-    const RTLD_NOW: c_int = 0x2;
-    const RTLD_LOCAL: c_int = 0x4;
-    const RTLD_NOLOAD: c_int = 0x10;
-    const TF_DLOPEN_FLAGS: c_int = RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD;
-
-    // Private ABI bridge (Itanium mangling in the TF 2.21.0 macOS arm64 wheel).
+    // Private ABI bridge symbols (Itanium mangling). Artifact-level nm of the
+    // official tensorflow==2.21.0 wheels confirms the same three exports on:
+    //   - macosx_12_0_arm64  python/lib_pywrap_tensorflow_common.dylib
+    //   - manylinux_2_27_x86_64  python/lib_pywrap_tensorflow_common.so
+    //   - manylinux_2_27_aarch64 python/lib_pywrap_tensorflow_common.so
     const SYM_EAGER_TENSOR_HANDLE: &str = "_Z18EagerTensor_HandlePK7_object";
     const SYM_EAGER_TENSOR_FROM_HANDLE: &str =
         "_Z21EagerTensorFromHandleP16TFE_TensorHandleb";
     const SYM_EAGER_TENSOR_CHECK_EXACT: &str =
         "_Z22EagerTensor_CheckExactPK7_object";
+
+    /// Compile-time platform ABI profile: dlopen flags, wheel images, and
+    /// Python machine tags. Only supported triples define a profile; every
+    /// other compile target (Windows, Linux musl, other OS/arch) hits
+    /// `compile_error!` — native-build fail-closed, not a runtime dlfcn path.
+    ///
+    /// RTLD_NOLOAD is the essential same-runtime gate: a missing image is an
+    /// error, never an instruction to load another TensorFlow copy.
+    /// Numeric values differ by OS:
+    ///   Darwin: RTLD_NOW=0x2, RTLD_LOCAL=0x4, RTLD_NOLOAD=0x10
+    ///   Linux glibc (target_env=gnu): RTLD_NOW=0x2, RTLD_LOCAL=0, RTLD_NOLOAD=0x4
+    /// TF_DLOPEN_FLAGS is always RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD with the
+    /// active profile's numeric values (never the process-default symbol namespace).
+    /// Official manylinux TF 2.21 wheels are glibc-only; musl is unsupported.
+    struct PlatformAbiProfile {
+        id: &'static str,
+        support_class: &'static str,
+        rtld_now: c_int,
+        rtld_local: c_int,
+        rtld_noload: c_int,
+        cc_library: &'static str,
+        framework_library: &'static str,
+        pywrap_library: &'static str,
+        python_machines: &'static [&'static str],
+    }
+
+    impl PlatformAbiProfile {
+        /// RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD for this OS.
+        fn tf_dlopen_flags(&self) -> c_int {
+            self.rtld_now | self.rtld_local | self.rtld_noload
+        }
+    }
+
+    // Certified: macOS arm64 (real-Cargo E2E evidence on aarch64-apple-darwin).
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    const PLATFORM_ABI_PROFILE: PlatformAbiProfile = PlatformAbiProfile {
+        id: "macos-arm64",
+        support_class: "certified",
+        rtld_now: 0x2,
+        rtld_local: 0x4,
+        rtld_noload: 0x10,
+        cc_library: "libtensorflow_cc.2.dylib",
+        framework_library: "libtensorflow_framework.2.dylib",
+        pywrap_library: "python/lib_pywrap_tensorflow_common.dylib",
+        python_machines: &["arm64"],
+    };
+
+    // Experimental: Linux GNU/glibc x86_64 only (manylinux wheels; no musl).
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    const PLATFORM_ABI_PROFILE: PlatformAbiProfile = PlatformAbiProfile {
+        id: "linux-x86_64",
+        support_class: "experimental",
+        rtld_now: 0x2,
+        rtld_local: 0x0,
+        rtld_noload: 0x4,
+        cc_library: "libtensorflow_cc.so.2",
+        framework_library: "libtensorflow_framework.so.2",
+        pywrap_library: "python/lib_pywrap_tensorflow_common.so",
+        python_machines: &["x86_64"],
+    };
+
+    // Experimental: Linux GNU/glibc aarch64 only (manylinux wheels; no musl).
+    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
+    const PLATFORM_ABI_PROFILE: PlatformAbiProfile = PlatformAbiProfile {
+        id: "linux-aarch64",
+        support_class: "experimental",
+        rtld_now: 0x2,
+        rtld_local: 0x0,
+        rtld_noload: 0x4,
+        cc_library: "libtensorflow_cc.so.2",
+        framework_library: "libtensorflow_framework.so.2",
+        pywrap_library: "python/lib_pywrap_tensorflow_common.so",
+        python_machines: &["aarch64", "arm64"],
+    };
+
+    // Native-build fail-closed: Windows (deferred), Linux musl, and every other
+    // triple. The dlfcn externs are not a truthful runtime contract there, so
+    // compilation stops with compile_error! (not a runtime success path).
+    // A never-used stub keeps the rest of the module type-checkable while the
+    // compile_error! below is the hard fail-closed gate.
+    #[cfg(not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
+        all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
+    )))]
+    const PLATFORM_ABI_PROFILE: PlatformAbiProfile = PlatformAbiProfile {
+        id: "unsupported",
+        support_class: "unsupported",
+        rtld_now: 0,
+        rtld_local: 0,
+        rtld_noload: 0,
+        cc_library: "",
+        framework_library: "",
+        pywrap_library: "",
+        python_machines: &[],
+    };
+
+    #[cfg(not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
+        all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
+    )))]
+    compile_error!(
+        "rextio-tensorflow: unsupported compile target — Alpha supports certified \
+         macOS arm64 and experimental Linux GNU/glibc (target_env=gnu) x86_64/aarch64 \
+         only; Windows, musl, and other triples fail closed at native build"
+    );
+
+    // Source-contract anchors: every supported profile's library basenames and
+    // OS-specific RTLD_NOLOAD values appear in this module text for tests.
+    #[allow(dead_code)]
+    const PLATFORM_PROFILE_SOURCE_CONTRACT: &str = concat!(
+        "profiles:macos-arm64:certified:",
+        "libtensorflow_cc.2.dylib,",
+        "libtensorflow_framework.2.dylib,",
+        "python/lib_pywrap_tensorflow_common.dylib,",
+        "RTLD_NOW=0x2,RTLD_LOCAL=0x4,RTLD_NOLOAD=0x10;",
+        "profiles:linux-x86_64:experimental:target_env=gnu:",
+        "libtensorflow_cc.so.2,",
+        "libtensorflow_framework.so.2,",
+        "python/lib_pywrap_tensorflow_common.so,",
+        "RTLD_NOW=0x2,RTLD_LOCAL=0x0,RTLD_NOLOAD=0x4;",
+        "profiles:linux-aarch64:experimental:target_env=gnu:",
+        "libtensorflow_cc.so.2,",
+        "libtensorflow_framework.so.2,",
+        "python/lib_pywrap_tensorflow_common.so,",
+        "RTLD_NOW=0x2,RTLD_LOCAL=0x0,RTLD_NOLOAD=0x4;",
+        "unsupported:compile_error:windows-musl-and-other-targets-native-build-fail-closed;",
+        "link:linux-gnu:libdl"
+    );
 
     #[repr(C)]
     struct DlInfo {
@@ -52,6 +179,12 @@ mod rextio_tensorflow_runtime {
         dli_saddr: *mut c_void,
     }
 
+    // Linux GNU (glibc) requires an explicit libdl link on older manylinux;
+    // macOS resolves dl* from libSystem without -ldl.
+    #[cfg_attr(
+        all(target_os = "linux", target_env = "gnu"),
+        link(name = "dl")
+    )]
     unsafe extern "C" {
         fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -103,12 +236,11 @@ mod rextio_tensorflow_runtime {
             .ok_or_else(|| runtime_error("tensorflow.__file__ has no package parent"))
     }
 
-    fn validate_platform(py: Python<'_>) -> PyResult<()> {
-        if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            return Err(runtime_error(
-                "Alpha requires aarch64-apple-darwin generated Rust",
-            ));
-        }
+    fn validate_platform(py: Python<'_>) -> PyResult<&'static PlatformAbiProfile> {
+        // Unsupported triples never reach here: they fail with compile_error!
+        // at native build (Windows, musl, other). Runtime only re-checks
+        // CPython / machine tags for the compile-time profile.
+        let profile = &PLATFORM_ABI_PROFILE;
         let sys = py.import("sys")?;
         let implementation: String = sys
             .getattr("implementation")?
@@ -123,12 +255,14 @@ mod rextio_tensorflow_runtime {
             )));
         }
         let machine: String = py.import("platform")?.call_method0("machine")?.extract()?;
-        if machine != "arm64" {
+        if !profile.python_machines.iter().any(|expected| *expected == machine) {
             return Err(runtime_error(format!(
-                "Alpha requires macOS arm64, got machine={machine}"
+                "platform profile {} ({}) requires machine in {:?}, got machine={machine}",
+                profile.id, profile.support_class, profile.python_machines
             )));
         }
-        Ok(())
+        let _ = PLATFORM_PROFILE_SOURCE_CONTRACT;
+        Ok(profile)
     }
 
     fn dl_error_text() -> String {
@@ -148,7 +282,12 @@ mod rextio_tensorflow_runtime {
     }
 
     impl DlHandle {
-        fn open_noload(path: PathBuf, label: &str) -> PyResult<Self> {
+        fn open_noload(
+            path: PathBuf,
+            label: &str,
+            // TF_DLOPEN_FLAGS = RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD (profile values)
+            flags: c_int,
+        ) -> PyResult<Self> {
             let path_text = path
                 .to_str()
                 .ok_or_else(|| runtime_error(format!("{label} path is not UTF-8")))?;
@@ -156,7 +295,7 @@ mod rextio_tensorflow_runtime {
             unsafe {
                 let _ = dlerror();
             }
-            let raw = unsafe { dlopen(c_path.as_ptr(), TF_DLOPEN_FLAGS) };
+            let raw = unsafe { dlopen(c_path.as_ptr(), flags) };
             if raw.is_null() {
                 return Err(runtime_error(format!(
                     "active {label} image is not already loaded at {}: {}",
@@ -302,18 +441,20 @@ mod rextio_tensorflow_runtime {
 
     impl Api {
         fn load(py: Python<'_>) -> PyResult<Self> {
-            validate_platform(py)?;
+            let profile = validate_platform(py)?;
             let tensorflow_root = active_tensorflow_root(py)?;
+            // Active-wheel relative paths come from the platform ABI profile —
+            // never Darwin literals mixed into common Linux logic.
             let cc_path = canonicalize(
-                &tensorflow_root.join("libtensorflow_cc.2.dylib"),
+                &tensorflow_root.join(profile.cc_library),
                 "libtensorflow_cc",
             )?;
             let framework_path = canonicalize(
-                &tensorflow_root.join("libtensorflow_framework.2.dylib"),
+                &tensorflow_root.join(profile.framework_library),
                 "libtensorflow_framework",
             )?;
             let pywrap_path = canonicalize(
-                &tensorflow_root.join("python/lib_pywrap_tensorflow_common.dylib"),
+                &tensorflow_root.join(profile.pywrap_library),
                 "lib_pywrap_tensorflow_common",
             )?;
             for (path, label) in [
@@ -329,12 +470,18 @@ mod rextio_tensorflow_runtime {
                 }
             }
 
-            let cc = DlHandle::open_noload(cc_path.clone(), "libtensorflow_cc")?;
-            let framework =
-                DlHandle::open_noload(framework_path.clone(), "libtensorflow_framework")?;
+            // TF_DLOPEN_FLAGS = RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD (OS-specific)
+            let flags = profile.tf_dlopen_flags();
+            let cc = DlHandle::open_noload(cc_path.clone(), "libtensorflow_cc", flags)?;
+            let framework = DlHandle::open_noload(
+                framework_path.clone(),
+                "libtensorflow_framework",
+                flags,
+            )?;
             let pywrap = DlHandle::open_noload(
                 pywrap_path.clone(),
                 "lib_pywrap_tensorflow_common",
+                flags,
             )?;
 
             let api = unsafe {
