@@ -100,8 +100,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         scope=RuleScope(
             kind="binop",
             pattern=(
-                "binary + on float32 CPU rank-2 (+ optional rank-1 bias) or "
-                "same-rank tensors"
+                "binary + on float32 CPU rank-2 (+ optional rank-1 bias) or same-rank tensors"
             ),
         ),
         constraint=(
@@ -124,8 +123,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         scope=RuleScope(
             kind="binop",
             pattern=(
-                "binary * on float32 CPU rank-2 (+ optional rank-1 bias) or "
-                "same-rank tensors"
+                "binary * on float32 CPU rank-2 (+ optional rank-1 bias) or same-rank tensors"
             ),
         ),
         constraint=(
@@ -309,9 +307,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         ),
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-005",
-        guidance=(
-            "Call tf.nn.sigmoid(x) with a TensorF32Cpu2D positional argument."
-        ),
+        guidance=("Call tf.nn.sigmoid(x) with a TensorF32Cpu2D positional argument."),
         stability="experimental",
         verified=True,
     ),
@@ -397,9 +393,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         ),
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-009",
-        guidance=(
-            "Call tf.nn.tanh(x) with a TensorF32Cpu2D positional argument."
-        ),
+        guidance=("Call tf.nn.tanh(x) with a TensorF32Cpu2D positional argument."),
         stability="experimental",
         verified=True,
     ),
@@ -417,6 +411,27 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-020",
         guidance="Call tf.nn.tanh(x) with a TensorF32Cpu1D positional argument.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/softmax-axis0-f32-cpu-1d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=("tf.nn.softmax(x) or tf.nn.softmax(x, axis=0) on a float32 CPU rank-1 tensor"),
+        ),
+        constraint=(
+            "One float32 CPU rank-1 tensor with axis omitted or explicit literal "
+            "axis=0, passed by keyword or as one aligned positional literal, "
+            "and no other keywords. Raw TFE Softmax operates on the final axis "
+            "and returns float32 CPU rank-1."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-025",
+        guidance=(
+            "Call tf.nn.softmax(x) or tf.nn.softmax(x, axis=0) with a TensorF32Cpu1D operand."
+        ),
         stability="experimental",
         verified=True,
     ),
@@ -469,9 +484,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         provider="rextio-tensorflow",
         scope=RuleScope(
             kind="call",
-            pattern=(
-                "tf.argmax(x, axis=0) with default int64 output on float32 CPU rank-2"
-            ),
+            pattern=("tf.argmax(x, axis=0) with default int64 output on float32 CPU rank-2"),
         ),
         constraint=(
             "One float32 CPU rank-2 tensor plus literal axis=0, passed by keyword "
@@ -526,7 +539,8 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
             "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, multiply, "
-            "reduce_mean(axis=1), reduce_sum(axis=1), sigmoid, tanh, softmax(axis=1), and default-int64 "
+            "reduce_mean(axis=1), reduce_sum(axis=1), sigmoid, tanh, rank-1 "
+            "softmax(axis=0/default), rank-2 softmax(axis=1), and default-int64 "
             "argmax(axis=1); other dtypes, devices, ranks, and dynamic literals "
             "remain on the fallback."
         ),

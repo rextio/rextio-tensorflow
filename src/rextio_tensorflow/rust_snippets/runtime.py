@@ -1269,6 +1269,11 @@ mod rextio_tensorflow_runtime {
         Python::attach(|_py| unary(input, "Tanh"))
     }
 
+    /// Softmax on the statically-proven final rank-1 axis (axis=0).
+    pub fn softmax_axis0(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| unary(input, "Softmax"))
+    }
+
     /// Softmax on the statically-proven final rank-2 axis (axis=1).
     pub fn softmax_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
         Python::attach(|_py| unary(input, "Softmax"))

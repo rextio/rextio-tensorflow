@@ -95,6 +95,18 @@ def rank1_activations(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
     return tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(x)))
 
 
+def softmax_rank1_default(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x)
+
+
+def softmax_rank1_axis0_keyword(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x, axis=0)
+
+
+def softmax_rank1_axis0_positional(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x, 0)
+
+
 def subtract_2d_1d(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2D:
     return tf.subtract(left, right)
 
@@ -679,27 +691,24 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             "rextio-tensorflow/sigmoid-f32-cpu-1d",
             "rextio-tensorflow/tanh-f32-cpu-1d",
         },
-        "tf_app.kernels.subtract_2d_1d": {
-            "rextio-tensorflow/sub-call-f32-cpu"
+        "tf_app.kernels.softmax_rank1_default": {"rextio-tensorflow/softmax-axis0-f32-cpu-1d"},
+        "tf_app.kernels.softmax_rank1_axis0_keyword": {
+            "rextio-tensorflow/softmax-axis0-f32-cpu-1d"
         },
-        "tf_app.kernels.subtract_1d_2d": {
-            "rextio-tensorflow/sub-binop-f32-cpu"
+        "tf_app.kernels.softmax_rank1_axis0_positional": {
+            "rextio-tensorflow/softmax-axis0-f32-cpu-1d"
         },
-        "tf_app.kernels.divide_2d_1d": {
-            "rextio-tensorflow/div-call-f32-cpu"
-        },
-        "tf_app.kernels.divide_1d_2d": {
-            "rextio-tensorflow/div-binop-f32-cpu"
-        },
+        "tf_app.kernels.subtract_2d_1d": {"rextio-tensorflow/sub-call-f32-cpu"},
+        "tf_app.kernels.subtract_1d_2d": {"rextio-tensorflow/sub-binop-f32-cpu"},
+        "tf_app.kernels.divide_2d_1d": {"rextio-tensorflow/div-call-f32-cpu"},
+        "tf_app.kernels.divide_1d_2d": {"rextio-tensorflow/div-binop-f32-cpu"},
         "tf_app.kernels.reduce_mean_axis0_keepdims": {
             "rextio-tensorflow/reduce-mean-literal-axis-f32-cpu-2d"
         },
         "tf_app.kernels.reduce_sum_axis1_keepdims": {
             "rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d"
         },
-        "tf_app.kernels.argmax_axis0": {
-            "rextio-tensorflow/argmax-axis0-i64-cpu-2d"
-        },
+        "tf_app.kernels.argmax_axis0": {"rextio-tensorflow/argmax-axis0-i64-cpu-2d"},
     }
     for qualname, rules in expected_rules.items():
         record = _route_of(project, qualname)
@@ -709,9 +718,7 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
 
     vertical_record = _route_of(project, "tf_app.kernels.cpu_surface_vertical")
     assert vertical_record["native_status"] == "accepted"
-    vertical_rules = {
-        claim["rule_id"] for claim in vertical_record.get("plugin_claims") or []
-    }
+    vertical_rules = {claim["rule_id"] for claim in vertical_record.get("plugin_claims") or []}
     assert {
         "rextio-tensorflow/relu-f32-cpu-1d",
         "rextio-tensorflow/sigmoid-f32-cpu-1d",
@@ -732,6 +739,7 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
     assert 'reduce_axis(input, "Mean", 0, true)' in rust
     assert 'reduce_axis(input, "Sum", 1, true)' in rust
     assert "argmax(input, 0)" in rust
+    assert "rextio_tensorflow_runtime::softmax_axis0" in rust
     assert "input.validate_f32(expected_rank)?" in rust
     assert "TFE_TensorHandleBackingDeviceName" in rust
     assert "TFE_OpSetDevice" in rust
@@ -741,18 +749,29 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
 
     vector = tf.constant([1.0, -2.0, 3.0], dtype=tf.float32)
     divisor = tf.constant([2.0, -4.0, 0.5], dtype=tf.float32)
-    matrix = tf.constant(
-        [[2.0, -8.0, 1.5], [4.0, 12.0, -0.5]], dtype=tf.float32
-    )
-    matrix_other = tf.constant(
-        [[0.5, -1.0, 2.0], [3.0, 4.0, -2.0]], dtype=tf.float32
-    )
+    matrix = tf.constant([[2.0, -8.0, 1.5], [4.0, 12.0, -0.5]], dtype=tf.float32)
+    matrix_other = tf.constant([[0.5, -1.0, 2.0], [3.0, 4.0, -2.0]], dtype=tf.float32)
 
     finite_cases = (
         (
             "tf_app.kernels.rank1_activations",
             (vector,),
             lambda args: tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(args[0]))),
+        ),
+        (
+            "tf_app.kernels.softmax_rank1_default",
+            (vector,),
+            lambda args: tf.nn.softmax(args[0]),
+        ),
+        (
+            "tf_app.kernels.softmax_rank1_axis0_keyword",
+            (vector,),
+            lambda args: tf.nn.softmax(args[0], axis=0),
+        ),
+        (
+            "tf_app.kernels.softmax_rank1_axis0_positional",
+            (vector,),
+            lambda args: tf.nn.softmax(args[0], 0),
         ),
         (
             "tf_app.kernels.subtract_2d_1d",
@@ -802,24 +821,20 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
         eager = eager_call(snapshots)
         assert _tensor_equal(native, eager)
         assert "CPU" in native.device
-        assert all(
-            _tensor_equal(arg, snapshot)
-            for arg, snapshot in zip(args, snapshots)
-        )
+        assert all(_tensor_equal(arg, snapshot) for arg, snapshot in zip(args, snapshots))
 
-    assert project.equivalence_checker(
-        "tf_app.kernels.cpu_surface_vertical",
-        equals=_tensor_equal,
-        args_equals=_args_unmutated,
-        copy_args=_copy_tensor_args,
-    )(matrix_other, vector, divisor).dtype == tf.int64
+    assert (
+        project.equivalence_checker(
+            "tf_app.kernels.cpu_surface_vertical",
+            equals=_tensor_equal,
+            args_equals=_args_unmutated,
+            copy_args=_copy_tensor_args,
+        )(matrix_other, vector, divisor).dtype
+        == tf.int64
+    )
 
-    special_left = tf.constant(
-        [0.0, -0.0, float("nan"), 1.0, float("inf")], dtype=tf.float32
-    )
-    special_right = tf.constant(
-        [float("-0.0"), 2.0, 1.0, 0.0, float("inf")], dtype=tf.float32
-    )
+    special_left = tf.constant([0.0, -0.0, float("nan"), 1.0, float("inf")], dtype=tf.float32)
+    special_right = tf.constant([float("-0.0"), 2.0, 1.0, 0.0, float("inf")], dtype=tf.float32)
     with _native_mode(project, "native"):
         from tf_app.kernels import divide_1d_2d, subtract_1d_2d
 
@@ -836,23 +851,20 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
     for native, eager in ((native_sub, eager_sub), (native_div, eager_div)):
         native_values = native.numpy().ravel().tolist()
         eager_values = eager.numpy().ravel().tolist()
-        for native_value, eager_value in zip(
-            native_values, eager_values, strict=True
-        ):
+        for native_value, eager_value in zip(native_values, eager_values, strict=True):
             if math.isnan(eager_value):
                 assert math.isnan(native_value)
                 continue
             assert native_value == eager_value
             if eager_value == 0.0:
-                assert math.copysign(1.0, native_value) == math.copysign(
-                    1.0, eager_value
-                )
+                assert math.copysign(1.0, native_value) == math.copysign(1.0, eager_value)
 
     with _native_mode(project, "native"):
         from tf_app.kernels import (
             cpu_surface_vertical,
             divide_2d_1d,
             rank1_activations,
+            softmax_rank1_default,
         )
 
         with pytest.raises(Exception):
@@ -864,6 +876,10 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             rank1_activations(tf.cast(vector, tf.float64))
         with pytest.raises(Exception, match="rank-1"):
             rank1_activations(matrix)
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            softmax_rank1_default(tf.cast(vector, tf.float64))
+        with pytest.raises(Exception, match="rank-1"):
+            softmax_rank1_default(matrix)
 
         matrix_live = tf.identity(matrix_other)
         gate_live = tf.identity(vector)

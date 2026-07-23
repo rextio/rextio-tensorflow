@@ -7,6 +7,11 @@ Changelog and Semantic Versioning conventions.
 
 ### Added
 
+- Add rank-1 float32 CPU `tf.nn.softmax` with the final axis omitted or
+  supplied as literal positional/keyword `axis=0`. The lowering reuses the
+  owned same-wheel TFE `Softmax` unary path, preserves the existing explicit
+  rank-2 `axis=1` contract, and rejects cross-rank axes, extra options,
+  dynamic literals, and forged metadata.
 - Expand the bounded CPU surface with rank-1 `tf.nn.relu` / `sigmoid` / `tanh`;
   exact `tf.multiply` / `tf.math.multiply`, `tf.subtract` /
   `tf.math.subtract`, and `tf.divide` / `tf.math.divide` call targets; and
