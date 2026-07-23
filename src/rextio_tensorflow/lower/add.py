@@ -19,9 +19,6 @@ _SUPPORTED = {
     (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D): TENSOR_F32_CPU_2D,
     (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D): TENSOR_F32_CPU_2D,
 }
-_ADD_RULES = frozenset({ADD_CALL_RULE, ADD_BINOP_RULE})
-
-
 def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
     """Lower a previously claimed bounded binary site, or return None."""
     is_add_binop = claimed.kind == "binop" and claimed.target == "+"
@@ -54,7 +51,9 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
         )
     left, right = claimed.operand_types[0], claimed.operand_types[1]
     if left is None or right is None:
-        raise ValueError("rextio-tensorflow add lower requires resolved operand types")
+        raise ValueError(
+            f"rextio-tensorflow {operation} lower requires resolved operand types"
+        )
     pair = (left, right)
     expected = _SUPPORTED.get(pair)
     if expected is None or claimed.result_type != expected:

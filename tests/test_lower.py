@@ -194,6 +194,8 @@ def test_lower_multiply_binop_revalidates_broadcast_metadata() -> None:
     malformed = replace(claimed, result_type=TENSOR_F32_CPU_1D)
     with pytest.raises(ValueError, match="operand/result"):
         PLUGIN.lower(malformed, ctx)
+    with pytest.raises(ValueError, match="multiply lower requires resolved"):
+        PLUGIN.lower(replace(claimed, operand_types=(None, TENSOR_F32_CPU_1D)), ctx)
 
 
 def test_lower_reduce_mean_axis1() -> None:
