@@ -15,6 +15,7 @@ import math
 import os
 import shutil
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -286,7 +287,67 @@ def _tensor_equal(left: object, right: object) -> bool:
         return False
     if left.dtype == tf.int64:
         return bool(tf.reduce_all(tf.equal(left, right)).numpy())
-    return bool(tf.reduce_all(tf.abs(left - right) <= 1e-5).numpy())
+    return _float_values_equal(
+        left.numpy().ravel().tolist(),
+        right.numpy().ravel().tolist(),
+        atol=1e-5,
+    )
+
+
+def _float_values_equal(
+    left_values: Sequence[float],
+    right_values: Sequence[float],
+    *,
+    atol: float,
+    strict_signed_zero: bool = False,
+) -> bool:
+    if len(left_values) != len(right_values):
+        return False
+    for left_value, right_value in zip(left_values, right_values, strict=True):
+        if math.isnan(left_value) or math.isnan(right_value):
+            if not (math.isnan(left_value) and math.isnan(right_value)):
+                return False
+            continue
+        if math.isinf(left_value) or math.isinf(right_value):
+            if left_value != right_value:
+                return False
+            continue
+        if strict_signed_zero and (left_value == 0.0 or right_value == 0.0):
+            if left_value != 0.0 or right_value != 0.0:
+                return False
+            if math.copysign(1.0, left_value) != math.copysign(1.0, right_value):
+                return False
+            continue
+        if abs(left_value - right_value) > atol:
+            return False
+    return True
+
+
+def test_float_value_comparator_handles_tolerance_and_ieee_classes() -> None:
+    """Hybrid comparison preserves IEEE classes and explicit zero-sign checks."""
+    nan = float("nan")
+    assert _float_values_equal(
+        (1.0, float("inf"), float("-inf"), nan, 0.0, -0.0),
+        (1.000009, float("inf"), float("-inf"), nan, 0.0, -0.0),
+        atol=1e-5,
+    )
+    assert not _float_values_equal((1.0,), (1.000011,), atol=1e-5)
+    assert not _float_values_equal((float("inf"),), (float("-inf"),), atol=1e-5)
+    assert not _float_values_equal((nan,), (1.0,), atol=1e-5)
+    assert _float_values_equal((0.0, -0.0), (-0.0, 0.0), atol=1e-5)
+    assert _float_values_equal((1e-6,), (0.0,), atol=1e-5)
+    assert not _float_values_equal(
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        atol=1e-5,
+        strict_signed_zero=True,
+    )
+    assert not _float_values_equal(
+        (1e-6,),
+        (0.0,),
+        atol=1e-5,
+        strict_signed_zero=True,
+    )
 
 
 def _float_special_values_equal(left: object, right: object) -> bool:
@@ -299,18 +360,12 @@ def _float_special_values_equal(left: object, right: object) -> bool:
         return False
     left_values = left.numpy().ravel().tolist()
     right_values = right.numpy().ravel().tolist()
-    for left_value, right_value in zip(left_values, right_values, strict=True):
-        if math.isnan(right_value):
-            if not math.isnan(left_value):
-                return False
-            continue
-        if left_value != right_value:
-            return False
-        if right_value == 0.0 and math.copysign(1.0, left_value) != math.copysign(
-            1.0, right_value
-        ):
-            return False
-    return True
+    return _float_values_equal(
+        left_values,
+        right_values,
+        atol=0.0,
+        strict_signed_zero=True,
+    )
 
 
 def _args_unmutated(left: object, right: object) -> bool:
