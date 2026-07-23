@@ -16,18 +16,29 @@ from rextio.plugins.loader import load_plugin_registry
 from rextio.targets.models import TargetSpec
 
 from rextio_tensorflow.claim.add import (
+    BIAS_ADD_RULE,
     DIV_CALL_RULE,
     MUL_CALL_RULE,
     SUB_CALL_RULE,
 )
 from rextio_tensorflow.claim.classification import (
     ARGMAX_AXIS0_RULE,
+    SOFTMAX_1D_RULE,
     SOFTMAX_RULE,
 )
 from rextio_tensorflow.claim.reductions import (
     MEAN_GENERAL_RULE,
     SUM_RULE,
 )
+from rextio_tensorflow.claim.unary import (
+    ABS_RULE,
+    EXP_RULE,
+    LOG_RULE,
+    NEGATIVE_RULE,
+    SQRT_RULE,
+    SQUARE_RULE,
+)
+from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D
 from rextio_tensorflow.plugin import PLUGIN_ID, plugin
 
 SURFACE_SOURCE = """
@@ -37,8 +48,12 @@ import tensorflow.math as tf_math
 from tensorflow import divide as top_divide
 from tensorflow import multiply as top_multiply
 from tensorflow import subtract as top_subtract
+from tensorflow import abs as top_abs
+from tensorflow import square as top_square
 from tensorflow.math import divide as math_divide
+from tensorflow.math import log as math_log
 from tensorflow.math import multiply as math_multiply
+from tensorflow.math import sqrt as math_sqrt
 from tensorflow.math import subtract as math_subtract
 
 
@@ -66,6 +81,34 @@ def divide_math(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
     return math_divide(left, right)
 
 
+def abs_top(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return top_abs(x)
+
+
+def negative_exact(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.negative(x)
+
+
+def square_top(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return top_square(x)
+
+
+def exp_exact(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.exp(x)
+
+
+def log_math(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return math_log(x)
+
+
+def sqrt_math(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return math_sqrt(x)
+
+
+def pseudo_math_abs(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.math.abs(x)
+
+
 def mean_axis0_keepdims(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
     return tf.reduce_mean(x, 0, keepdims=True)
 
@@ -80,6 +123,22 @@ def argmax_axis0_positional(x: TensorF32Cpu2D) -> TensorI64Cpu1D:
 
 def softmax_axis1_positional(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
     return tf.nn.softmax(x, 1)
+
+
+def softmax_rank1_default(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x)
+
+
+def softmax_rank1_axis0_keyword(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x, axis=0)
+
+
+def softmax_rank1_axis0_positional(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x, 0)
+
+
+def softmax_rank1_axis1_fallback(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x, axis=1)
 
 
 def pseudo_truediv(left: TensorF32Cpu2D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
@@ -98,10 +157,22 @@ def softmax_axis0_fallback(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
     return tf.nn.softmax(x, 0)
 
 
-def bias_add_fallback(
+def bias_add_default(
     x: TensorF32Cpu2D, bias: TensorF32Cpu1D
 ) -> TensorF32Cpu2D:
     return tf.nn.bias_add(x, bias)
+
+
+def bias_add_nhwc(
+    x: TensorF32Cpu2D, bias: TensorF32Cpu1D
+) -> TensorF32Cpu2D:
+    return tf.nn.bias_add(x, bias, data_format="NHWC")
+
+
+def bias_add_nchw_fallback(
+    x: TensorF32Cpu2D, bias: TensorF32Cpu1D
+) -> TensorF32Cpu2D:
+    return tf.nn.bias_add(x, bias, data_format="NCHW")
 """
 
 
@@ -156,9 +227,7 @@ def _lowering_inputs(registry):
         by_key[plugin_type.key] = rxt_type
         for spelling in plugin_type.annotations:
             by_spelling[spelling] = rxt_type
-    providers = {
-        binding.plugin_id: binding.provider for binding in registry.providers
-    }
+    providers = {binding.plugin_id: binding.provider for binding in registry.providers}
     return PluginTypeMaps(by_key=by_key, by_spelling=by_spelling), providers, by_key
 
 
@@ -201,6 +270,34 @@ def test_analyzer_resolves_only_explicit_binary_import_aliases(tmp_path: Path) -
         assert not function.plugin_claims
 
 
+def test_analyzer_resolves_only_exact_math_unary_aliases(tmp_path: Path) -> None:
+    registry = _registry()
+    analysis = analyze_project(
+        _write_project(tmp_path),
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=RextioConfig(),
+    )
+    expected = {
+        "abs_top": ("tensorflow.abs", ABS_RULE),
+        "negative_exact": ("tensorflow.negative", NEGATIVE_RULE),
+        "square_top": ("tensorflow.square", SQUARE_RULE),
+        "exp_exact": ("tensorflow.exp", EXP_RULE),
+        "log_math": ("tensorflow.math.log", LOG_RULE),
+        "sqrt_math": ("tensorflow.math.sqrt", SQRT_RULE),
+    }
+    for name, (target, rule) in expected.items():
+        function = _function(analysis, name)
+        assert function.accepted is True
+        assert function.route == f"native-plugin:{PLUGIN_ID}"
+        assert len(function.plugin_claims) == 1
+        claim = function.plugin_claims[0]
+        assert claim.target == target
+        assert claim.rule_id == rule
+
+    assert not _function(analysis, "pseudo_math_abs").plugin_claims
+
+
 def test_analyzer_preserves_positional_axis_literal_alignment(tmp_path: Path) -> None:
     registry = _registry()
     analysis = analyze_project(
@@ -214,6 +311,7 @@ def test_analyzer_preserves_positional_axis_literal_alignment(tmp_path: Path) ->
         "sum_axis1_positional": (SUM_RULE, 1),
         "argmax_axis0_positional": (ARGMAX_AXIS0_RULE, 0),
         "softmax_axis1_positional": (SOFTMAX_RULE, 1),
+        "softmax_rank1_axis0_positional": (SOFTMAX_1D_RULE, 0),
     }
     for name, (rule, axis) in expected.items():
         function = _function(analysis, name)
@@ -236,7 +334,8 @@ def test_analyzer_preserves_positional_axis_literal_alignment(tmp_path: Path) ->
     for name in (
         "positional_keepdims_bool_is_not_offered",
         "softmax_axis0_fallback",
-        "bias_add_fallback",
+        "softmax_rank1_axis1_fallback",
+        "bias_add_nchw_fallback",
     ):
         function = _function(analysis, name)
         assert not function.plugin_claims
@@ -263,8 +362,66 @@ def test_analyzer_positional_axes_lower_with_core_rendered_full_arity(
     assert "rextio_tensorflow_runtime::reduce_mean_axis0_keepdims(&x)?" in source
     assert "rextio_tensorflow_runtime::reduce_sum_axis1(&x)?" in source
     assert "rextio_tensorflow_runtime::argmax_axis0(&x)?" in source
+    assert "rextio_tensorflow_runtime::softmax_axis0(&x)?" in source
     assert "rextio_tensorflow_runtime::softmax_axis1(&x)?" in source
     assert "reduce_mean_axis0_keepdims(&x, " not in source
     assert "reduce_sum_axis1(&x, " not in source
     assert "argmax_axis0(&x, " not in source
+    assert "softmax_axis0(&x, " not in source
     assert "softmax_axis1(&x, " not in source
+
+
+def test_analyzer_claims_bounded_bias_add_forms(tmp_path: Path) -> None:
+    registry = _registry()
+    analysis = analyze_project(
+        _write_project(tmp_path),
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=RextioConfig(),
+    )
+    for name in ("bias_add_default", "bias_add_nhwc"):
+        function = _function(analysis, name)
+        assert function.accepted is True
+        assert function.route == f"native-plugin:{PLUGIN_ID}"
+        assert len(function.plugin_claims) == 1
+        claim = function.plugin_claims[0]
+        assert claim.rule_id == BIAS_ADD_RULE
+        assert claim.operand_types == (
+            TENSOR_F32_CPU_2D,
+            TENSOR_F32_CPU_1D,
+        )
+
+    type_maps, providers, by_key = _lowering_inputs(registry)
+    source = generate_rust_module(
+        lower_project(analysis, plugin_types=type_maps),
+        plugin_providers=providers,
+        plugin_types_by_key=by_key,
+    )
+    assert "rextio_tensorflow_runtime::bias_add(&x, &bias)?" in source
+
+
+def test_analyzer_claims_rank1_softmax_default_and_keyword_axis(
+    tmp_path: Path,
+) -> None:
+    registry = _registry()
+    analysis = analyze_project(
+        _write_project(tmp_path),
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=RextioConfig(),
+    )
+
+    default_claim = _function(analysis, "softmax_rank1_default").plugin_claims[0]
+    assert default_claim.rule_id == SOFTMAX_1D_RULE
+    assert default_claim.operand_types == (TENSOR_F32_CPU_1D,)
+    assert default_claim.operand_literals == (ClaimLiteral(is_literal=False),)
+    assert not default_claim.keywords
+
+    keyword_claim = _function(analysis, "softmax_rank1_axis0_keyword").plugin_claims[0]
+    assert keyword_claim.rule_id == SOFTMAX_1D_RULE
+    assert len(keyword_claim.keywords) == 1
+    assert keyword_claim.keywords[0].name == "axis"
+    assert keyword_claim.keywords[0].literal == ClaimLiteral(
+        is_literal=True,
+        value=0,
+    )

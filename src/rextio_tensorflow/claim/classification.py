@@ -7,7 +7,9 @@ from rextio.plugins.api import Claimed, ClaimResult, ClaimSite, KeywordArg, NotC
 from rextio_tensorflow.diagnostics import (
     DIAGNOSTIC_ARGMAX,
     DIAGNOSTIC_SOFTMAX,
+    DIAGNOSTIC_SOFTMAX_1D,
     DIAGNOSTIC_UNSUPPORTED,
+    TENSOR_F32_CPU_1D,
     TENSOR_F32_CPU_2D,
     TENSOR_I64_CPU_1D,
     is_tensor_type,
@@ -15,10 +17,17 @@ from rextio_tensorflow.diagnostics import (
 )
 
 SOFTMAX_RULE = "rextio-tensorflow/softmax-axis1-f32-cpu-2d"
+SOFTMAX_1D_RULE = "rextio-tensorflow/softmax-axis0-f32-cpu-1d"
 ARGMAX_RULE = "rextio-tensorflow/argmax-axis1-i64-cpu-2d"
 ARGMAX_AXIS0_RULE = "rextio-tensorflow/argmax-axis0-i64-cpu-2d"
 SOFTMAX_TARGETS = frozenset({"tensorflow.nn.softmax", "tf.nn.softmax"})
 ARGMAX_TARGETS = frozenset({"tensorflow.argmax", "tf.argmax"})
+
+
+def _single_tensor_literal_metadata_is_aligned(site: ClaimSite) -> bool:
+    return not site.operand_literals or (
+        len(site.operand_literals) == 1 and not site.operand_literals[0].is_literal
+    )
 
 
 def _literal_keywords(site: ClaimSite) -> dict[str, KeywordArg] | None:
@@ -32,9 +41,7 @@ def _literal_keywords(site: ClaimSite) -> dict[str, KeywordArg] | None:
     return values
 
 
-def _literal_axis(
-    site: ClaimSite, *, diagnostic: str, operation: str
-) -> int | ClaimResult:
+def _literal_axis(site: ClaimSite, *, diagnostic: str, operation: str) -> int | ClaimResult:
     values = _literal_keywords(site)
     if values is None:
         return reject(
@@ -44,6 +51,13 @@ def _literal_axis(
             f"Write tf.{operation}(x, axis=0|1) with a literal axis.",
         )
     if len(site.operand_types) == 1:
+        if not _single_tensor_literal_metadata_is_aligned(site):
+            return reject(
+                site,
+                diagnostic,
+                f"{operation} keyword-axis form received forged positional literal metadata",
+                "Pass axis only as the literal keyword.",
+            )
         if set(values) != {"axis"}:
             return reject(
                 site,
@@ -68,10 +82,7 @@ def _literal_axis(
                 f"{operation} positional axis form accepts no keywords",
                 "Use one positional literal axis and omit additional keywords.",
             )
-        if (
-            site.operand_types[1] != "int"
-            or len(site.operand_literals) != 2
-        ):
+        if site.operand_types[1] != "int" or len(site.operand_literals) != 2:
             return reject(
                 site,
                 diagnostic,
@@ -104,9 +115,7 @@ def _literal_axis(
     return axis
 
 
-def _rank2_input(
-    site: ClaimSite, *, diagnostic: str, operation: str
-) -> ClaimResult | None:
+def _rank2_input(site: ClaimSite, *, diagnostic: str, operation: str) -> ClaimResult | None:
     operand = site.operand_types[0]
     if operand is None:
         return NotCovered()
@@ -127,11 +136,44 @@ def _rank2_input(
     return None
 
 
+def _softmax_axis(site: ClaimSite, diagnostic: str) -> int | ClaimResult:
+    if len(site.operand_types) == 1 and not site.keywords:
+        if not _single_tensor_literal_metadata_is_aligned(site):
+            return reject(
+                site,
+                diagnostic,
+                "omitted-axis softmax received forged positional literal metadata",
+                "Call tf.nn.softmax(x) with no axis metadata.",
+            )
+        return -1
+    return _literal_axis(site, diagnostic=diagnostic, operation="nn.softmax")
+
+
 def _try_softmax(site: ClaimSite) -> ClaimResult:
-    axis = _literal_axis(site, diagnostic=DIAGNOSTIC_SOFTMAX, operation="nn.softmax")
+    operand = site.operand_types[0] if site.operand_types else None
+    diagnostic = DIAGNOSTIC_SOFTMAX_1D if operand == TENSOR_F32_CPU_1D else DIAGNOSTIC_SOFTMAX
+    axis = _softmax_axis(site, diagnostic)
     if not isinstance(axis, int):
         return axis
-    if axis == 0:
+    if operand is None:
+        return NotCovered()
+    if not is_tensor_type(operand):
+        return reject(
+            site,
+            DIAGNOSTIC_UNSUPPORTED,
+            "operand type is outside the float32 CPU tensor surface",
+            "Annotate the operand as TensorF32Cpu1D or TensorF32Cpu2D.",
+        )
+    if operand == TENSOR_F32_CPU_1D:
+        if axis not in {-1, 0}:
+            return reject(
+                site,
+                DIAGNOSTIC_SOFTMAX_1D,
+                "raw TFE Softmax is last-axis-only; rank-1 requires axis=0",
+                "Omit axis or use literal axis=0 for TensorF32Cpu1D.",
+            )
+        return Claimed(rule_id=SOFTMAX_1D_RULE, result_type=TENSOR_F32_CPU_1D)
+    if operand == TENSOR_F32_CPU_2D and axis == 0:
         return reject(
             site,
             DIAGNOSTIC_SOFTMAX,
@@ -141,10 +183,21 @@ def _try_softmax(site: ClaimSite) -> ClaimResult:
             ),
             "Use literal axis=1 or keep axis=0 softmax on Python fallback.",
         )
-    rejected = _rank2_input(site, diagnostic=DIAGNOSTIC_SOFTMAX, operation="softmax")
-    if rejected is not None:
-        return rejected
-    return Claimed(rule_id=SOFTMAX_RULE, result_type=TENSOR_F32_CPU_2D)
+    if operand == TENSOR_F32_CPU_2D:
+        if axis != 1:
+            return reject(
+                site,
+                DIAGNOSTIC_SOFTMAX,
+                "bounded rank-2 softmax requires an explicit literal axis=1",
+                "Write tf.nn.softmax(x, axis=1) for TensorF32Cpu2D.",
+            )
+        return Claimed(rule_id=SOFTMAX_RULE, result_type=TENSOR_F32_CPU_2D)
+    return reject(
+        site,
+        diagnostic,
+        f"Alpha softmax requires a float32 CPU rank-1/2 operand; got {operand!r}",
+        "Use TensorF32Cpu1D or TensorF32Cpu2D for the softmax operand.",
+    )
 
 
 def _try_argmax(site: ClaimSite) -> ClaimResult:
@@ -177,6 +230,7 @@ __all__ = [
     "ARGMAX_AXIS0_RULE",
     "ARGMAX_RULE",
     "ARGMAX_TARGETS",
+    "SOFTMAX_1D_RULE",
     "SOFTMAX_RULE",
     "SOFTMAX_TARGETS",
     "try_claim",

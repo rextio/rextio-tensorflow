@@ -25,6 +25,7 @@ from rextio_tensorflow.claim.activations import (
 from rextio_tensorflow.claim.add import (
     ADD_BINOP_RULE,
     ADD_CALL_RULE,
+    BIAS_ADD_RULE,
     DIV_BINOP_RULE,
     DIV_CALL_RULE,
     MUL_BINOP_RULE,
@@ -35,6 +36,7 @@ from rextio_tensorflow.claim.add import (
 from rextio_tensorflow.claim.classification import (
     ARGMAX_AXIS0_RULE,
     ARGMAX_RULE,
+    SOFTMAX_1D_RULE,
     SOFTMAX_RULE,
 )
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
@@ -43,6 +45,14 @@ from rextio_tensorflow.claim.reductions import (
     MEAN_RULE,
     SUM_GENERAL_RULE,
     SUM_RULE,
+)
+from rextio_tensorflow.claim.unary import (
+    ABS_RULE,
+    EXP_RULE,
+    LOG_RULE,
+    NEGATIVE_RULE,
+    SQRT_RULE,
+    SQUARE_RULE,
 )
 from rextio_tensorflow.diagnostics import (
     TENSOR_F32_CPU_1D,
@@ -101,11 +111,124 @@ def test_claims_linalg_matmul_alias() -> None:
         ("tf.nn.tanh", TENSOR_F32_CPU_2D, TANH_RULE),
     ),
 )
-def test_claims_rank1_and_rank2_activations(
-    target: str, operand: str, rule: str
+def test_claims_rank1_and_rank2_activations(target: str, operand: str, rule: str) -> None:
+    result = PLUGIN.claim(_call(target, (operand,)), CONFIG)
+    assert result == Claimed(rule_id=rule, result_type=operand)
+
+
+@pytest.mark.parametrize(
+    ("target", "rule"),
+    (
+        ("tensorflow.abs", ABS_RULE),
+        ("tf.abs", ABS_RULE),
+        ("tensorflow.negative", NEGATIVE_RULE),
+        ("tf.negative", NEGATIVE_RULE),
+        ("tensorflow.square", SQUARE_RULE),
+        ("tf.square", SQUARE_RULE),
+        ("tensorflow.exp", EXP_RULE),
+        ("tf.exp", EXP_RULE),
+        ("tensorflow.math.log", LOG_RULE),
+        ("tf.math.log", LOG_RULE),
+        ("tensorflow.math.sqrt", SQRT_RULE),
+        ("tf.math.sqrt", SQRT_RULE),
+    ),
+)
+@pytest.mark.parametrize("operand", (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D))
+def test_claims_exact_math_unary_surface(
+    target: str,
+    rule: str,
+    operand: str,
 ) -> None:
     result = PLUGIN.claim(_call(target, (operand,)), CONFIG)
     assert result == Claimed(rule_id=rule, result_type=operand)
+
+
+@pytest.mark.parametrize(
+    ("target", "operand_types", "operand_literals", "keywords"),
+    (
+        (
+            "tensorflow.abs",
+            (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D),
+            (),
+            (),
+        ),
+        (
+            "tensorflow.negative",
+            (TENSOR_I64_CPU_1D,),
+            (),
+            (),
+        ),
+        (
+            "tensorflow.square",
+            (TENSOR_F32_CPU_1D,),
+            (ClaimLiteral(is_literal=True, value=1),),
+            (),
+        ),
+        (
+            "tensorflow.exp",
+            (TENSOR_F32_CPU_2D,),
+            (),
+            (
+                KeywordArg(
+                    name="name",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="exp"),
+                ),
+            ),
+        ),
+    ),
+)
+def test_math_unary_near_misses_fail_closed(
+    target: str,
+    operand_types: tuple[str | None, ...],
+    operand_literals: tuple[ClaimLiteral, ...],
+    keywords: tuple[KeywordArg, ...],
+) -> None:
+    result = PLUGIN.claim(
+        _call(
+            target,
+            operand_types,
+            operand_literals=operand_literals,
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert isinstance(result, Rejected)
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        "tensorflow.math.abs",
+        "tensorflow.math.negative",
+        "tensorflow.math.square",
+        "tensorflow.math.exp",
+        "tensorflow.log",
+        "tensorflow.sqrt",
+    ),
+)
+def test_math_unary_unlisted_aliases_are_not_covered(target: str) -> None:
+    result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_1D,)), CONFIG)
+    assert isinstance(result, NotCovered)
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        "tensorflow.maximum",
+        "tf.maximum",
+        "tensorflow.minimum",
+        "tf.minimum",
+    ),
+)
+def test_maximum_minimum_remain_unclaimed_without_full_semantic_matrix(
+    target: str,
+) -> None:
+    result = PLUGIN.claim(
+        _call(target, (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D)),
+        CONFIG,
+    )
+    assert isinstance(result, NotCovered)
 
 
 def test_claims_add_rank2_bias() -> None:
@@ -231,20 +354,124 @@ def test_binary_surface_rejects_scalars_keywords_and_unlisted_aliases() -> None:
         "tensorflow.raw_ops.Sub",
         "tensorflow.multiply_extra",
     ):
-        result = PLUGIN.claim(
-            _call(target, (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D)), CONFIG
-        )
+        result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D)), CONFIG)
         assert isinstance(result, NotCovered)
 
 
-def test_bias_add_is_explicitly_rejected_until_tfe_contract_is_proven() -> None:
-    for target in ("tensorflow.nn.bias_add", "tf.nn.bias_add"):
-        result = PLUGIN.claim(
-            _call(target, (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D)), CONFIG
+@pytest.mark.parametrize("target", ("tensorflow.nn.bias_add", "tf.nn.bias_add"))
+@pytest.mark.parametrize("explicit_nhwc", (False, True))
+def test_claims_bounded_nhwc_bias_add(
+    target: str,
+    explicit_nhwc: bool,
+) -> None:
+    keywords = (
+        (
+            KeywordArg(
+                name="data_format",
+                arg_type="str",
+                literal=ClaimLiteral(is_literal=True, value="NHWC"),
+            ),
         )
-        assert isinstance(result, Rejected)
-        assert result.diagnostic.code == "RXTP-TENSORFLOW-021"
-        assert "data_format" in result.diagnostic.message
+        if explicit_nhwc
+        else ()
+    )
+    result = PLUGIN.claim(
+        _call(
+            target,
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert result == Claimed(
+        rule_id=BIAS_ADD_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+    )
+
+
+@pytest.mark.parametrize(
+    ("operand_types", "operand_literals", "keywords"),
+    (
+        ((TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D), (), ()),
+        ((TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D), (), ()),
+        (
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            (),
+            (
+                KeywordArg(
+                    name="data_format",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="NCHW"),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            (),
+            (
+                KeywordArg(
+                    name="data_format",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=False),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            (),
+            (
+                KeywordArg(
+                    name="name",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="bias"),
+                ),
+            ),
+        ),
+        (
+            (),
+            (),
+            (
+                KeywordArg(
+                    name="value",
+                    arg_type=TENSOR_F32_CPU_2D,
+                    literal=ClaimLiteral(is_literal=False),
+                ),
+                KeywordArg(
+                    name="bias",
+                    arg_type=TENSOR_F32_CPU_1D,
+                    literal=ClaimLiteral(is_literal=False),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            (
+                ClaimLiteral(is_literal=False),
+                ClaimLiteral(is_literal=True, value=1),
+            ),
+            (),
+        ),
+    ),
+)
+def test_bias_add_near_misses_fail_closed(
+    operand_types: tuple[str | None, ...],
+    operand_literals: tuple[ClaimLiteral, ...],
+    keywords: tuple[KeywordArg, ...],
+) -> None:
+    result = PLUGIN.claim(
+        _call(
+            "tensorflow.nn.bias_add",
+            operand_types,
+            operand_literals=operand_literals,
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert isinstance(result, Rejected)
+    assert result.diagnostic.code in {
+        "RXTP-TENSORFLOW-010",
+        "RXTP-TENSORFLOW-021",
+    }
 
 
 def test_binop_add_rejection_uses_binop_diagnostic_authority() -> None:
@@ -321,9 +548,7 @@ def test_claims_reduce_mean_literal_axis_keepdims_matrix(
             literal=ClaimLiteral(is_literal=True, value=keepdims),
         ),
     )
-    result = PLUGIN.claim(
-        _call(target, (TENSOR_F32_CPU_2D,), keywords=keywords), CONFIG
-    )
+    result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_2D,), keywords=keywords), CONFIG)
     assert result == Claimed(rule_id=expected_rule, result_type=result_type)
 
 
@@ -403,10 +628,122 @@ def test_claims_classification_literal_axis_forms(
             ),
         )
     result = PLUGIN.claim(site, CONFIG)
-    expected_type = (
-        TENSOR_F32_CPU_2D if "softmax" in target else TENSOR_I64_CPU_1D
-    )
+    expected_type = TENSOR_F32_CPU_2D if "softmax" in target else TENSOR_I64_CPU_1D
     assert result == Claimed(rule_id=rule, result_type=expected_type)
+
+
+@pytest.mark.parametrize("target", ("tensorflow.nn.softmax", "tf.nn.softmax"))
+@pytest.mark.parametrize("axis_form", ("default", "keyword", "positional"))
+def test_claims_rank1_softmax_final_axis_forms(target: str, axis_form: str) -> None:
+    if axis_form == "default":
+        site = _call(target, (TENSOR_F32_CPU_1D,))
+    elif axis_form == "keyword":
+        site = _call(
+            target,
+            (TENSOR_F32_CPU_1D,),
+            keywords=(
+                KeywordArg(
+                    name="axis",
+                    arg_type="int",
+                    literal=ClaimLiteral(is_literal=True, value=0),
+                ),
+            ),
+        )
+    else:
+        site = _call(
+            target,
+            (TENSOR_F32_CPU_1D, "int"),
+            operand_literals=(
+                ClaimLiteral(is_literal=False),
+                ClaimLiteral(is_literal=True, value=0),
+            ),
+        )
+
+    assert PLUGIN.claim(site, CONFIG) == Claimed(
+        rule_id=SOFTMAX_1D_RULE,
+        result_type=TENSOR_F32_CPU_1D,
+    )
+
+
+@pytest.mark.parametrize(
+    ("operand_types", "operand_literals", "keywords"),
+    (
+        (
+            (TENSOR_F32_CPU_1D,),
+            (),
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type="int",
+                    literal=ClaimLiteral(is_literal=True, value=1),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_1D,),
+            (),
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type="int",
+                    literal=ClaimLiteral(is_literal=False),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_1D,),
+            (),
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type="int",
+                    literal=ClaimLiteral(is_literal=True, value=0),
+                ),
+                KeywordArg(
+                    name="name",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="softmax"),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_1D, "int"),
+            (
+                ClaimLiteral(is_literal=False),
+                ClaimLiteral(is_literal=False),
+            ),
+            (),
+        ),
+        (
+            (TENSOR_F32_CPU_1D,),
+            (ClaimLiteral(is_literal=True, value=0),),
+            (),
+        ),
+    ),
+)
+def test_rank1_softmax_near_misses_fail_closed(
+    operand_types: tuple[str | None, ...],
+    operand_literals: tuple[ClaimLiteral, ...],
+    keywords: tuple[KeywordArg, ...],
+) -> None:
+    result = PLUGIN.claim(
+        _call(
+            "tensorflow.nn.softmax",
+            operand_types,
+            operand_literals=operand_literals,
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert isinstance(result, Rejected)
+
+
+def test_rank1_softmax_rejects_non_float32_tensor_metadata() -> None:
+    result = PLUGIN.claim(
+        _call("tensorflow.nn.softmax", (TENSOR_I64_CPU_1D,)),
+        CONFIG,
+    )
+    assert isinstance(result, Rejected)
 
 
 @pytest.mark.parametrize(
@@ -423,9 +760,7 @@ def test_rejects_duplicate_literal_axis_metadata_at_claim(target: str) -> None:
         KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
         KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
     )
-    result = PLUGIN.claim(
-        _call(target, (TENSOR_F32_CPU_2D,), keywords=duplicate_axis), CONFIG
-    )
+    result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_2D,), keywords=duplicate_axis), CONFIG)
     assert isinstance(result, Rejected)
 
 
@@ -433,19 +768,31 @@ def test_rejects_duplicate_literal_axis_metadata_at_claim(target: str) -> None:
     "keywords",
     (
         (),
-        (KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=False, value=None)),),
         (
-            KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
-            KeywordArg(name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=False, value=None)),
+            KeywordArg(
+                name="axis", arg_type="int", literal=ClaimLiteral(is_literal=False, value=None)
+            ),
         ),
         (
             KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
-            KeywordArg(name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=False)),
-            KeywordArg(name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=False)),
+            KeywordArg(
+                name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=False, value=None)
+            ),
         ),
         (
             KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
-            KeywordArg(name="name", arg_type="str", literal=ClaimLiteral(is_literal=True, value="bad")),
+            KeywordArg(
+                name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=False)
+            ),
+            KeywordArg(
+                name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=False)
+            ),
+        ),
+        (
+            KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+            KeywordArg(
+                name="name", arg_type="str", literal=ClaimLiteral(is_literal=True, value="bad")
+            ),
         ),
     ),
 )
@@ -457,9 +804,7 @@ def test_reduce_sum_near_misses_remain_fallback(keywords: tuple[KeywordArg, ...]
 
 
 def test_reduce_sum_positional_axis_remains_fallback() -> None:
-    result = PLUGIN.claim(
-        _call("tensorflow.reduce_sum", (TENSOR_F32_CPU_2D, "int")), CONFIG
-    )
+    result = PLUGIN.claim(_call("tensorflow.reduce_sum", (TENSOR_F32_CPU_2D, "int")), CONFIG)
     assert isinstance(result, Rejected)
 
 
@@ -633,9 +978,7 @@ def test_classification_rejects_forged_keepdims_keyword(target: str) -> None:
 def test_axis_keyword_arg_type_literal_contradictions_are_rejected(
     target: str, keywords: tuple[KeywordArg, ...]
 ) -> None:
-    result = PLUGIN.claim(
-        _call(target, (TENSOR_F32_CPU_2D,), keywords=keywords), CONFIG
-    )
+    result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_2D,), keywords=keywords), CONFIG)
     assert isinstance(result, Rejected)
 
 

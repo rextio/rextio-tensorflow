@@ -112,6 +112,12 @@ def test_covers_alpha_surface() -> None:
     assert "tensorflow.matmul" in coverage.symbols
     assert "tensorflow.nn.relu" in coverage.symbols
     assert "tensorflow.nn.tanh" in coverage.symbols
+    assert "tensorflow.abs" in coverage.symbols
+    assert "tensorflow.negative" in coverage.symbols
+    assert "tensorflow.square" in coverage.symbols
+    assert "tensorflow.exp" in coverage.symbols
+    assert "tensorflow.math.log" in coverage.symbols
+    assert "tensorflow.math.sqrt" in coverage.symbols
     assert "tensorflow.multiply" in coverage.symbols
     assert "tensorflow.math.multiply" in coverage.symbols
     assert "tensorflow.subtract" in coverage.symbols

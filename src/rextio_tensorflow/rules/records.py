@@ -100,8 +100,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         scope=RuleScope(
             kind="binop",
             pattern=(
-                "binary + on float32 CPU rank-2 (+ optional rank-1 bias) or "
-                "same-rank tensors"
+                "binary + on float32 CPU rank-2 (+ optional rank-1 bias) or same-rank tensors"
             ),
         ),
         constraint=(
@@ -124,8 +123,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         scope=RuleScope(
             kind="binop",
             pattern=(
-                "binary * on float32 CPU rank-2 (+ optional rank-1 bias) or "
-                "same-rank tensors"
+                "binary * on float32 CPU rank-2 (+ optional rank-1 bias) or same-rank tensors"
             ),
         ),
         constraint=(
@@ -309,9 +307,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         ),
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-005",
-        guidance=(
-            "Call tf.nn.sigmoid(x) with a TensorF32Cpu2D positional argument."
-        ),
+        guidance=("Call tf.nn.sigmoid(x) with a TensorF32Cpu2D positional argument."),
         stability="experimental",
         verified=True,
     ),
@@ -397,9 +393,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         ),
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-009",
-        guidance=(
-            "Call tf.nn.tanh(x) with a TensorF32Cpu2D positional argument."
-        ),
+        guidance=("Call tf.nn.tanh(x) with a TensorF32Cpu2D positional argument."),
         stability="experimental",
         verified=True,
     ),
@@ -417,6 +411,135 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-020",
         guidance="Call tf.nn.tanh(x) with a TensorF32Cpu1D positional argument.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/abs-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.abs on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Abs result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-026",
+        guidance="Call tf.abs(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/negative-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.negative on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Neg result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-027",
+        guidance="Call tf.negative(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/square-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.square on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Square result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-028",
+        guidance="Call tf.square(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/exp-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.exp on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Exp result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-029",
+        guidance="Call tf.exp(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/log-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.math.log on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Log result preserves rank, "
+            "dtype, and CPU:0 residency, including TensorFlow domain behavior."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-030",
+        guidance="Call tf.math.log(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/sqrt-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.math.sqrt on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Sqrt result preserves rank, "
+            "dtype, CPU:0 residency, domain behavior, and signed zero."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-031",
+        guidance="Call tf.math.sqrt(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/softmax-axis0-f32-cpu-1d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=("tf.nn.softmax(x) or tf.nn.softmax(x, axis=0) on a float32 CPU rank-1 tensor"),
+        ),
+        constraint=(
+            "One float32 CPU rank-1 tensor with axis omitted or explicit literal "
+            "axis=0, passed by keyword or as one aligned positional literal, "
+            "and no other keywords. Raw TFE Softmax operates on the final axis "
+            "and returns float32 CPU rank-1."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-025",
+        guidance=(
+            "Call tf.nn.softmax(x) or tf.nn.softmax(x, axis=0) with a TensorF32Cpu1D operand."
+        ),
         stability="experimental",
         verified=True,
     ),
@@ -469,9 +592,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         provider="rextio-tensorflow",
         scope=RuleScope(
             kind="call",
-            pattern=(
-                "tf.argmax(x, axis=0) with default int64 output on float32 CPU rank-2"
-            ),
+            pattern=("tf.argmax(x, axis=0) with default int64 output on float32 CPU rank-2"),
         ),
         constraint=(
             "One float32 CPU rank-2 tensor plus literal axis=0, passed by keyword "
@@ -486,25 +607,31 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
-        id="rextio-tensorflow/bias-add-unproven-fallback",
+        id="rextio-tensorflow/bias-add-nhwc-f32-cpu-2d",
         provider="rextio-tensorflow",
         scope=RuleScope(
             kind="call",
-            pattern="tf.nn.bias_add on TensorFlow tensors",
+            pattern=(
+                "tf.nn.bias_add on rank-2 float32 CPU value plus rank-1 bias "
+                "with default/NHWC data format"
+            ),
         ),
         constraint=(
-            "Native claim is withheld until the exact TFE BiasAdd data_format "
-            "attribute, required public-symbol provenance, broadcasting, dtype, "
-            "device, and error semantics are certified on every native profile."
+            "Exactly two positional operands in value-then-bias order. value is "
+            "TensorF32Cpu2D, bias is TensorF32Cpu1D, and data_format is omitted "
+            "or the named static literal 'NHWC'. Generated Rust resolves "
+            "TFE_OpSetAttrString from the exact owning TensorFlow 2.21 image, "
+            "sets NHWC explicitly, and delegates last-dimension compatibility "
+            "and error semantics to the owned TFE BiasAdd operation."
         ),
-        outcome="fallback",
+        outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-021",
         guidance=(
-            "Keep tf.nn.bias_add on Python, or use an already-supported explicit "
-            "add spelling when its semantics are appropriate."
+            "Call tf.nn.bias_add(value, bias) with TensorF32Cpu2D value and "
+            "TensorF32Cpu1D bias; omit data_format or use data_format='NHWC'."
         ),
         stability="experimental",
-        verified=False,
+        verified=True,
     ),
     RuleRecord(
         id="rextio-tensorflow/unsupported-tensor-surface",
@@ -525,10 +652,11 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="fallback",
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
-            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, multiply, "
-            "reduce_mean(axis=1), reduce_sum(axis=1), sigmoid, tanh, softmax(axis=1), and default-int64 "
-            "argmax(axis=1); other dtypes, devices, ranks, and dynamic literals "
-            "remain on the fallback."
+            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, activations, "
+            "exact math unary operations, add/multiply/subtract/divide, reductions, "
+            "rank-1 softmax(axis=0/default), rank-2 softmax(axis=1), and "
+            "default-int64 argmax; other dtypes, devices, ranks, aliases, and "
+            "dynamic literals remain on the fallback."
         ),
         stability="experimental",
         verified=False,

@@ -8,6 +8,8 @@ from rextio_tensorflow.claim.add import (
     ADD_BINOP_RULE,
     ADD_CALL_RULE,
     ADD_TARGETS,
+    BIAS_ADD_RULE,
+    BIAS_ADD_TARGETS,
     DIV_BINOP_RULE,
     DIV_CALL_RULE,
     DIV_TARGETS,
@@ -27,8 +29,63 @@ _SUPPORTED = {
     (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D): TENSOR_F32_CPU_2D,
     (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D): TENSOR_F32_CPU_2D,
 }
+
+
+def _lower_bias_add(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr:
+    if claimed.receiver is not None or ctx.receiver is not None:
+        raise ValueError(
+            "rextio-tensorflow functional bias_add lower forbids receivers"
+        )
+    if (
+        claimed.rule_id != BIAS_ADD_RULE
+        or claimed.result_type != TENSOR_F32_CPU_2D
+        or claimed.operand_types
+        != (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D)
+    ):
+        raise ValueError(
+            "rextio-tensorflow received malformed bias_add lower metadata"
+        )
+    if claimed.operand_literals and (
+        len(claimed.operand_literals) != 2
+        or any(literal.is_literal for literal in claimed.operand_literals)
+    ):
+        raise ValueError(
+            "rextio-tensorflow bias_add lower rejects forged positional literal metadata"
+        )
+    keywords = {keyword.name: keyword for keyword in claimed.keywords}
+    if len(keywords) != len(claimed.keywords):
+        raise ValueError(
+            "rextio-tensorflow bias_add lower rejects duplicate keyword metadata"
+        )
+    if keywords:
+        if set(keywords) != {"data_format"}:
+            raise ValueError(
+                "rextio-tensorflow bias_add lower accepts only data_format='NHWC'"
+            )
+        data_format = keywords["data_format"]
+        if (
+            data_format.arg_type != "str"
+            or not data_format.literal.is_literal
+            or data_format.literal.value != "NHWC"
+        ):
+            raise ValueError(
+                "rextio-tensorflow bias_add lower requires literal data_format='NHWC'"
+            )
+    if len(ctx.operands) != 2:
+        raise ValueError(
+            "rextio-tensorflow bias_add lower requires two ctx.operands entries"
+        )
+    value, bias = ctx.operands
+    return LoweredExpr(
+        rust=f"rextio_tensorflow_runtime::bias_add(&{value}, &{bias})?",
+        helpers=(runtime_module_helpers(),),
+    )
+
+
 def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
     """Lower a previously claimed bounded binary site, or return None."""
+    if claimed.kind == "call" and claimed.target in BIAS_ADD_TARGETS:
+        return _lower_bias_add(claimed, ctx)
     binops = {
         "+": (ADD_BINOP_RULE, "add", "add"),
         "*": (MUL_BINOP_RULE, "multiply", "mul"),

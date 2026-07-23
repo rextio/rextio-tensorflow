@@ -7,6 +7,16 @@ Changelog and Semantic Versioning conventions.
 
 ### Added
 
+- Add rank-1 float32 CPU `tf.nn.softmax` with the final axis omitted or
+  supplied as literal positional/keyword `axis=0`. The lowering reuses the
+  owned same-wheel TFE `Softmax` unary path, preserves the existing explicit
+  rank-2 `axis=1` contract, and rejects cross-rank axes, extra options,
+  dynamic literals, and forged metadata.
+- Add exact rank-1/rank-2 float32 CPU `tf.abs`, `tf.negative`, `tf.square`,
+  `tf.exp`, `tf.math.log`, and `tf.math.sqrt` calls. Generated Rust dispatches
+  owned same-wheel TFE `Abs`, `Neg`, `Square`, `Exp`, `Log`, and `Sqrt`
+  operations with rank/dtype/device revalidation and special-value parity
+  coverage.
 - Expand the bounded CPU surface with rank-1 `tf.nn.relu` / `sigmoid` / `tanh`;
   exact `tf.multiply` / `tf.math.multiply`, `tf.subtract` /
   `tf.math.subtract`, and `tf.divide` / `tf.math.divide` call targets; and
@@ -24,9 +34,13 @@ Changelog and Semantic Versioning conventions.
   and keyword-type claim/lower guards, and a real-Cargo vertical slice spanning
   the new unary, binary, reduction, classification, CPU residency, error,
   special-value, no-host-resolve, and lifetime behavior.
-- Record `tf.nn.bias_add` as an explicit NO-GO/fallback until the exact TFE
-  `data_format` attribute symbol/provenance and cross-profile semantics are
-  separately certified.
+- Add bounded `tf.nn.bias_add` for rank-2 float32 CPU value plus rank-1 bias
+  with data format omitted or literal `NHWC`. The runtime resolves
+  `TFE_OpSetAttrString` from the exact owning TensorFlow 2.21 image, sets NHWC
+  explicitly, and preserves existing context/device/RAII/error boundaries.
+- Keep `tf.maximum` / `tf.minimum` outside this wave: native lowering remains
+  deferred until every supported broadcast pair, incompatible shape, NaN/Inf,
+  and signed-zero case is certified across the native platform matrix.
 - Add `tf.nn.tanh(x)` for one positional float32 CPU rank-2 tensor with no
   keywords. The owned TFE `Tanh` operation reuses the existing same-wheel,
   RAII, eager-context, and float32 rank-2 result validation path.

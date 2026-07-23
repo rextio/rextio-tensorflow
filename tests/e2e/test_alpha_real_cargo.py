@@ -15,6 +15,7 @@ import math
 import os
 import shutil
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -93,6 +94,60 @@ def multiply_1d_2d(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2
 
 def rank1_activations(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
     return tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(x)))
+
+
+def softmax_rank1_default(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x)
+
+
+def softmax_rank1_axis0_keyword(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x, axis=0)
+
+
+def softmax_rank1_axis0_positional(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.softmax(x, 0)
+
+
+def unary_abs_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.abs(x)
+
+
+def unary_negative_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.negative(x)
+
+
+def unary_square_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.square(x)
+
+
+def unary_exp_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.exp(x)
+
+
+def unary_log_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.math.log(x)
+
+
+def unary_sqrt_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.math.sqrt(x)
+
+
+def unary_chain_2d(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.math.sqrt(
+        tf.math.log(tf.exp(tf.square(tf.negative(tf.abs(x)))))
+    )
+
+
+def bias_add_default(
+    value: TensorF32Cpu2D, bias: TensorF32Cpu1D
+) -> TensorF32Cpu2D:
+    return tf.nn.bias_add(value, bias)
+
+
+def bias_add_nhwc(
+    value: TensorF32Cpu2D, bias: TensorF32Cpu1D
+) -> TensorF32Cpu2D:
+    return tf.nn.bias_add(value, bias, data_format="NHWC")
 
 
 def subtract_2d_1d(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2D:
@@ -232,7 +287,85 @@ def _tensor_equal(left: object, right: object) -> bool:
         return False
     if left.dtype == tf.int64:
         return bool(tf.reduce_all(tf.equal(left, right)).numpy())
-    return bool(tf.reduce_all(tf.abs(left - right) <= 1e-5).numpy())
+    return _float_values_equal(
+        left.numpy().ravel().tolist(),
+        right.numpy().ravel().tolist(),
+        atol=1e-5,
+    )
+
+
+def _float_values_equal(
+    left_values: Sequence[float],
+    right_values: Sequence[float],
+    *,
+    atol: float,
+    strict_signed_zero: bool = False,
+) -> bool:
+    if len(left_values) != len(right_values):
+        return False
+    for left_value, right_value in zip(left_values, right_values, strict=True):
+        if math.isnan(left_value) or math.isnan(right_value):
+            if not (math.isnan(left_value) and math.isnan(right_value)):
+                return False
+            continue
+        if math.isinf(left_value) or math.isinf(right_value):
+            if left_value != right_value:
+                return False
+            continue
+        if strict_signed_zero and (left_value == 0.0 or right_value == 0.0):
+            if left_value != 0.0 or right_value != 0.0:
+                return False
+            if math.copysign(1.0, left_value) != math.copysign(1.0, right_value):
+                return False
+            continue
+        if abs(left_value - right_value) > atol:
+            return False
+    return True
+
+
+def test_float_value_comparator_handles_tolerance_and_ieee_classes() -> None:
+    """Hybrid comparison preserves IEEE classes and explicit zero-sign checks."""
+    nan = float("nan")
+    assert _float_values_equal(
+        (1.0, float("inf"), float("-inf"), nan, 0.0, -0.0),
+        (1.000009, float("inf"), float("-inf"), nan, 0.0, -0.0),
+        atol=1e-5,
+    )
+    assert not _float_values_equal((1.0,), (1.000011,), atol=1e-5)
+    assert not _float_values_equal((float("inf"),), (float("-inf"),), atol=1e-5)
+    assert not _float_values_equal((nan,), (1.0,), atol=1e-5)
+    assert _float_values_equal((0.0, -0.0), (-0.0, 0.0), atol=1e-5)
+    assert _float_values_equal((1e-6,), (0.0,), atol=1e-5)
+    assert not _float_values_equal(
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        atol=1e-5,
+        strict_signed_zero=True,
+    )
+    assert not _float_values_equal(
+        (1e-6,),
+        (0.0,),
+        atol=1e-5,
+        strict_signed_zero=True,
+    )
+
+
+def _float_special_values_equal(left: object, right: object) -> bool:
+    tf = _import_tf()
+    if not isinstance(left, tf.Tensor) or not isinstance(right, tf.Tensor):
+        return False
+    if left.dtype != tf.float32 or right.dtype != tf.float32:
+        return False
+    if left.shape != right.shape:
+        return False
+    left_values = left.numpy().ravel().tolist()
+    right_values = right.numpy().ravel().tolist()
+    return _float_values_equal(
+        left_values,
+        right_values,
+        atol=0.0,
+        strict_signed_zero=True,
+    )
 
 
 def _args_unmutated(left: object, right: object) -> bool:
@@ -679,27 +812,56 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             "rextio-tensorflow/sigmoid-f32-cpu-1d",
             "rextio-tensorflow/tanh-f32-cpu-1d",
         },
-        "tf_app.kernels.subtract_2d_1d": {
-            "rextio-tensorflow/sub-call-f32-cpu"
+        "tf_app.kernels.softmax_rank1_default": {"rextio-tensorflow/softmax-axis0-f32-cpu-1d"},
+        "tf_app.kernels.softmax_rank1_axis0_keyword": {
+            "rextio-tensorflow/softmax-axis0-f32-cpu-1d"
         },
-        "tf_app.kernels.subtract_1d_2d": {
-            "rextio-tensorflow/sub-binop-f32-cpu"
+        "tf_app.kernels.softmax_rank1_axis0_positional": {
+            "rextio-tensorflow/softmax-axis0-f32-cpu-1d"
         },
-        "tf_app.kernels.divide_2d_1d": {
-            "rextio-tensorflow/div-call-f32-cpu"
+        "tf_app.kernels.unary_abs_1d": {
+            "rextio-tensorflow/abs-f32-cpu"
         },
-        "tf_app.kernels.divide_1d_2d": {
-            "rextio-tensorflow/div-binop-f32-cpu"
+        "tf_app.kernels.unary_negative_1d": {
+            "rextio-tensorflow/negative-f32-cpu"
         },
+        "tf_app.kernels.unary_square_1d": {
+            "rextio-tensorflow/square-f32-cpu"
+        },
+        "tf_app.kernels.unary_exp_1d": {
+            "rextio-tensorflow/exp-f32-cpu"
+        },
+        "tf_app.kernels.unary_log_1d": {
+            "rextio-tensorflow/log-f32-cpu"
+        },
+        "tf_app.kernels.unary_sqrt_1d": {
+            "rextio-tensorflow/sqrt-f32-cpu"
+        },
+        "tf_app.kernels.unary_chain_2d": {
+            "rextio-tensorflow/abs-f32-cpu",
+            "rextio-tensorflow/negative-f32-cpu",
+            "rextio-tensorflow/square-f32-cpu",
+            "rextio-tensorflow/exp-f32-cpu",
+            "rextio-tensorflow/log-f32-cpu",
+            "rextio-tensorflow/sqrt-f32-cpu",
+        },
+        "tf_app.kernels.bias_add_default": {
+            "rextio-tensorflow/bias-add-nhwc-f32-cpu-2d"
+        },
+        "tf_app.kernels.bias_add_nhwc": {
+            "rextio-tensorflow/bias-add-nhwc-f32-cpu-2d"
+        },
+        "tf_app.kernels.subtract_2d_1d": {"rextio-tensorflow/sub-call-f32-cpu"},
+        "tf_app.kernels.subtract_1d_2d": {"rextio-tensorflow/sub-binop-f32-cpu"},
+        "tf_app.kernels.divide_2d_1d": {"rextio-tensorflow/div-call-f32-cpu"},
+        "tf_app.kernels.divide_1d_2d": {"rextio-tensorflow/div-binop-f32-cpu"},
         "tf_app.kernels.reduce_mean_axis0_keepdims": {
             "rextio-tensorflow/reduce-mean-literal-axis-f32-cpu-2d"
         },
         "tf_app.kernels.reduce_sum_axis1_keepdims": {
             "rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d"
         },
-        "tf_app.kernels.argmax_axis0": {
-            "rextio-tensorflow/argmax-axis0-i64-cpu-2d"
-        },
+        "tf_app.kernels.argmax_axis0": {"rextio-tensorflow/argmax-axis0-i64-cpu-2d"},
     }
     for qualname, rules in expected_rules.items():
         record = _route_of(project, qualname)
@@ -709,9 +871,7 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
 
     vertical_record = _route_of(project, "tf_app.kernels.cpu_surface_vertical")
     assert vertical_record["native_status"] == "accepted"
-    vertical_rules = {
-        claim["rule_id"] for claim in vertical_record.get("plugin_claims") or []
-    }
+    vertical_rules = {claim["rule_id"] for claim in vertical_record.get("plugin_claims") or []}
     assert {
         "rextio-tensorflow/relu-f32-cpu-1d",
         "rextio-tensorflow/sigmoid-f32-cpu-1d",
@@ -732,6 +892,12 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
     assert 'reduce_axis(input, "Mean", 0, true)' in rust
     assert 'reduce_axis(input, "Sum", 1, true)' in rust
     assert "argmax(input, 0)" in rust
+    assert "rextio_tensorflow_runtime::softmax_axis0" in rust
+    for operation in ("Abs", "Neg", "Square", "Exp", "Log", "Sqrt"):
+        assert f'unary(input, "{operation}")' in rust
+    assert 'cc.resolve("TFE_OpSetAttrString")' in rust
+    assert 'op.set_string("data_format", "NHWC")?' in rust
+    assert "rextio_tensorflow_runtime::bias_add" in rust
     assert "input.validate_f32(expected_rank)?" in rust
     assert "TFE_TensorHandleBackingDeviceName" in rust
     assert "TFE_OpSetDevice" in rust
@@ -741,18 +907,50 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
 
     vector = tf.constant([1.0, -2.0, 3.0], dtype=tf.float32)
     divisor = tf.constant([2.0, -4.0, 0.5], dtype=tf.float32)
-    matrix = tf.constant(
-        [[2.0, -8.0, 1.5], [4.0, 12.0, -0.5]], dtype=tf.float32
-    )
-    matrix_other = tf.constant(
-        [[0.5, -1.0, 2.0], [3.0, 4.0, -2.0]], dtype=tf.float32
-    )
+    matrix = tf.constant([[2.0, -8.0, 1.5], [4.0, 12.0, -0.5]], dtype=tf.float32)
+    matrix_other = tf.constant([[0.5, -1.0, 2.0], [3.0, 4.0, -2.0]], dtype=tf.float32)
 
     finite_cases = (
         (
             "tf_app.kernels.rank1_activations",
             (vector,),
             lambda args: tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(args[0]))),
+        ),
+        (
+            "tf_app.kernels.softmax_rank1_default",
+            (vector,),
+            lambda args: tf.nn.softmax(args[0]),
+        ),
+        (
+            "tf_app.kernels.softmax_rank1_axis0_keyword",
+            (vector,),
+            lambda args: tf.nn.softmax(args[0], axis=0),
+        ),
+        (
+            "tf_app.kernels.softmax_rank1_axis0_positional",
+            (vector,),
+            lambda args: tf.nn.softmax(args[0], 0),
+        ),
+        (
+            "tf_app.kernels.unary_chain_2d",
+            (matrix,),
+            lambda args: tf.math.sqrt(
+                tf.math.log(
+                    tf.exp(tf.square(tf.negative(tf.abs(args[0]))))
+                )
+            ),
+        ),
+        (
+            "tf_app.kernels.bias_add_default",
+            (matrix, vector),
+            lambda args: tf.nn.bias_add(args[0], args[1]),
+        ),
+        (
+            "tf_app.kernels.bias_add_nhwc",
+            (matrix, vector),
+            lambda args: tf.nn.bias_add(
+                args[0], args[1], data_format="NHWC"
+            ),
         ),
         (
             "tf_app.kernels.subtract_2d_1d",
@@ -802,24 +1000,78 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
         eager = eager_call(snapshots)
         assert _tensor_equal(native, eager)
         assert "CPU" in native.device
-        assert all(
-            _tensor_equal(arg, snapshot)
-            for arg, snapshot in zip(args, snapshots)
+        assert all(_tensor_equal(arg, snapshot) for arg, snapshot in zip(args, snapshots))
+
+    assert (
+        project.equivalence_checker(
+            "tf_app.kernels.cpu_surface_vertical",
+            equals=_tensor_equal,
+            args_equals=_args_unmutated,
+            copy_args=_copy_tensor_args,
+        )(matrix_other, vector, divisor).dtype
+        == tf.int64
+    )
+
+    unary_special = tf.constant(
+        [
+            float("-inf"),
+            -1.0,
+            -0.0,
+            0.0,
+            1.0,
+            float("inf"),
+            float("nan"),
+        ],
+        dtype=tf.float32,
+    )
+    unary_snapshot = tf.identity(unary_special)
+    eager_unary_operations = {
+        "unary_abs_1d": tf.abs,
+        "unary_negative_1d": tf.negative,
+        "unary_square_1d": tf.square,
+        "unary_exp_1d": tf.exp,
+        "unary_log_1d": tf.math.log,
+        "unary_sqrt_1d": tf.math.sqrt,
+    }
+    with _native_mode(project, "native"):
+        from tf_app import kernels
+
+        native_unary_results = {
+            name: getattr(kernels, name)(unary_special)
+            for name in eager_unary_operations
+        }
+    for name, eager_operation in eager_unary_operations.items():
+        eager_result = eager_operation(unary_snapshot)
+        assert _float_special_values_equal(native_unary_results[name], eager_result)
+    assert _float_special_values_equal(unary_special, unary_snapshot)
+
+    bias_special_value = tf.constant(
+        [[float("nan"), -0.0, float("inf")], [0.0, -1.0, float("-inf")]],
+        dtype=tf.float32,
+    )
+    bias_special_bias = tf.constant(
+        [0.0, -0.0, float("-inf")],
+        dtype=tf.float32,
+    )
+    with _native_mode(project, "native"):
+        from tf_app.kernels import bias_add_nhwc
+
+        native_bias_special = bias_add_nhwc(
+            bias_special_value,
+            bias_special_bias,
         )
-
-    assert project.equivalence_checker(
-        "tf_app.kernels.cpu_surface_vertical",
-        equals=_tensor_equal,
-        args_equals=_args_unmutated,
-        copy_args=_copy_tensor_args,
-    )(matrix_other, vector, divisor).dtype == tf.int64
-
-    special_left = tf.constant(
-        [0.0, -0.0, float("nan"), 1.0, float("inf")], dtype=tf.float32
+    eager_bias_special = tf.nn.bias_add(
+        bias_special_value,
+        bias_special_bias,
+        data_format="NHWC",
     )
-    special_right = tf.constant(
-        [float("-0.0"), 2.0, 1.0, 0.0, float("inf")], dtype=tf.float32
+    assert _float_special_values_equal(
+        native_bias_special,
+        eager_bias_special,
     )
+
+    special_left = tf.constant([0.0, -0.0, float("nan"), 1.0, float("inf")], dtype=tf.float32)
+    special_right = tf.constant([float("-0.0"), 2.0, 1.0, 0.0, float("inf")], dtype=tf.float32)
     with _native_mode(project, "native"):
         from tf_app.kernels import divide_1d_2d, subtract_1d_2d
 
@@ -836,23 +1088,22 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
     for native, eager in ((native_sub, eager_sub), (native_div, eager_div)):
         native_values = native.numpy().ravel().tolist()
         eager_values = eager.numpy().ravel().tolist()
-        for native_value, eager_value in zip(
-            native_values, eager_values, strict=True
-        ):
+        for native_value, eager_value in zip(native_values, eager_values, strict=True):
             if math.isnan(eager_value):
                 assert math.isnan(native_value)
                 continue
             assert native_value == eager_value
             if eager_value == 0.0:
-                assert math.copysign(1.0, native_value) == math.copysign(
-                    1.0, eager_value
-                )
+                assert math.copysign(1.0, native_value) == math.copysign(1.0, eager_value)
 
     with _native_mode(project, "native"):
         from tf_app.kernels import (
+            bias_add_default,
             cpu_surface_vertical,
             divide_2d_1d,
             rank1_activations,
+            softmax_rank1_default,
+            unary_abs_1d,
         )
 
         with pytest.raises(Exception):
@@ -864,6 +1115,23 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             rank1_activations(tf.cast(vector, tf.float64))
         with pytest.raises(Exception, match="rank-1"):
             rank1_activations(matrix)
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            softmax_rank1_default(tf.cast(vector, tf.float64))
+        with pytest.raises(Exception, match="rank-1"):
+            softmax_rank1_default(matrix)
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            unary_abs_1d(tf.cast(vector, tf.float64))
+        with pytest.raises(Exception, match="rank-1"):
+            unary_abs_1d(matrix)
+        with pytest.raises(Exception):
+            bias_add_default(
+                matrix,
+                tf.constant([1.0, 2.0], dtype=tf.float32),
+            )
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            bias_add_default(matrix, tf.cast(vector, tf.float64))
+        with pytest.raises(Exception, match="rank-2"):
+            bias_add_default(vector, vector)
 
         matrix_live = tf.identity(matrix_other)
         gate_live = tf.identity(vector)
@@ -890,7 +1158,20 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             ),
             0,
         )
-    del matrix_live, gate_live, bias_live
+        bias_value_live = tf.identity(matrix)
+        bias_vector_live = tf.identity(vector)
+        held_bias = bias_add_default(bias_value_live, bias_vector_live)
+        expected_held_bias = tf.nn.bias_add(
+            bias_value_live,
+            bias_vector_live,
+        )
+    del (
+        matrix_live,
+        gate_live,
+        bias_live,
+        bias_value_live,
+        bias_vector_live,
+    )
     import gc
 
     gc.collect()
@@ -898,6 +1179,11 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
     assert "CPU" in held.device
     assert held.dtype == tf.int64
     assert _tensor_equal(held, expected_held)
+    assert isinstance(held_bias, tf.Tensor)
+    assert "CPU" in held_bias.device
+    assert held_bias.dtype == tf.float32
+    assert held_bias.shape == matrix.shape
+    assert _tensor_equal(held_bias, expected_held_bias)
 
 
 class _native_mode:
