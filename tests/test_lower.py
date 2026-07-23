@@ -17,9 +17,14 @@ from rextio.plugins.api import (
 
 from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE
 from rextio_tensorflow.claim.add import ADD_BINOP_RULE
+from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
 from rextio_tensorflow.claim.reductions import MEAN_RULE
-from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D
+from rextio_tensorflow.diagnostics import (
+    TENSOR_F32_CPU_1D,
+    TENSOR_F32_CPU_2D,
+    TENSOR_I64_CPU_1D,
+)
 from rextio_tensorflow.plugin import plugin
 from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
 
@@ -191,6 +196,61 @@ def test_lower_reduce_mean_axis1() -> None:
     )
     lowered = PLUGIN.lower(claimed, ctx)
     assert lowered.rust == "rextio_tensorflow_runtime::reduce_mean_axis1(&h)?"
+
+
+@pytest.mark.parametrize(
+    ("target", "rule", "result_type", "helper"),
+    (
+        ("tensorflow.nn.softmax", SOFTMAX_RULE, TENSOR_F32_CPU_2D, "softmax_axis1"),
+        ("tensorflow.argmax", ARGMAX_RULE, TENSOR_I64_CPU_1D, "argmax_axis1"),
+    ),
+)
+def test_lower_classification_head(target: str, rule: str, result_type: str, helper: str) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target=target,
+        operand_types=(TENSOR_F32_CPU_2D,),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=rule,
+        result_type=result_type,
+        keywords=(
+            KeywordArg(
+                name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)
+            ),
+        ),
+    )
+    lowered = PLUGIN.lower(
+        claimed,
+        LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),
+    )
+    assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&h)?"
+    assert "axis_one_scalar" in runtime_module_helpers()
+    assert "TF_INT64" in runtime_module_helpers()
+
+
+def test_classification_lower_revalidates_default_int64_contract() -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.argmax",
+        operand_types=(TENSOR_F32_CPU_2D,),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=ARGMAX_RULE,
+        result_type=TENSOR_I64_CPU_1D,
+        keywords=(
+            KeywordArg(
+                name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=0)
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="axis=1"):
+        PLUGIN.lower(
+            claimed,
+            LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),
+        )
 
 
 def test_functional_lower_rejects_claimed_or_rendered_receiver() -> None:

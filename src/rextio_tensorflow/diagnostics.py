@@ -9,12 +9,16 @@ PLUGIN_ID = "rextio-tensorflow"
 
 TENSOR_F32_CPU_1D = "rextio-tensorflow/tensor-f32-cpu-1d"
 TENSOR_F32_CPU_2D = "rextio-tensorflow/tensor-f32-cpu-2d"
+TENSOR_I64_CPU_1D = "rextio-tensorflow/tensor-i64-cpu-1d"
 
-TENSOR_TYPE_KEYS: frozenset[str] = frozenset({TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D})
+TENSOR_TYPE_KEYS: frozenset[str] = frozenset(
+    {TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D, TENSOR_I64_CPU_1D}
+)
 
 _TENSOR_META: dict[str, tuple[str, str, int]] = {
     TENSOR_F32_CPU_1D: ("f32", "cpu", 1),
     TENSOR_F32_CPU_2D: ("f32", "cpu", 2),
+    TENSOR_I64_CPU_1D: ("i64", "cpu", 1),
 }
 
 DIAGNOSTIC_MATMUL = "RXTP-TENSORFLOW-001"
@@ -23,6 +27,8 @@ DIAGNOSTIC_ADD = "RXTP-TENSORFLOW-003"
 DIAGNOSTIC_MEAN = "RXTP-TENSORFLOW-004"
 DIAGNOSTIC_SIGMOID = "RXTP-TENSORFLOW-005"
 DIAGNOSTIC_ADD_BINOP = "RXTP-TENSORFLOW-006"
+DIAGNOSTIC_SOFTMAX = "RXTP-TENSORFLOW-007"
+DIAGNOSTIC_ARGMAX = "RXTP-TENSORFLOW-008"
 DIAGNOSTIC_UNSUPPORTED = "RXTP-TENSORFLOW-010"
 
 RUNTIME_ERRORS = {
@@ -63,15 +69,18 @@ def reject(site: ClaimSite, code: str, message: str, suggestion: str) -> Rejecte
 __all__ = [
     "DIAGNOSTIC_ADD",
     "DIAGNOSTIC_ADD_BINOP",
+    "DIAGNOSTIC_ARGMAX",
     "DIAGNOSTIC_MATMUL",
     "DIAGNOSTIC_MEAN",
     "DIAGNOSTIC_RELU",
     "DIAGNOSTIC_SIGMOID",
+    "DIAGNOSTIC_SOFTMAX",
     "DIAGNOSTIC_UNSUPPORTED",
     "PLUGIN_ID",
     "RUNTIME_ERRORS",
     "TENSOR_F32_CPU_1D",
     "TENSOR_F32_CPU_2D",
+    "TENSOR_I64_CPU_1D",
     "TENSOR_TYPE_KEYS",
     "is_tensor_type",
     "reject",

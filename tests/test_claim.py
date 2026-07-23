@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from rextio.config.schema import RextioConfig
 from rextio.plugins.api import (
     ClaimLiteral,
@@ -14,9 +16,14 @@ from rextio.plugins.api import (
 
 from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE
 from rextio_tensorflow.claim.add import ADD_BINOP_RULE, ADD_CALL_RULE
+from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
 from rextio_tensorflow.claim.reductions import MEAN_RULE
-from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D
+from rextio_tensorflow.diagnostics import (
+    TENSOR_F32_CPU_1D,
+    TENSOR_F32_CPU_2D,
+    TENSOR_I64_CPU_1D,
+)
 from rextio_tensorflow.plugin import plugin
 
 PLUGIN = plugin()
@@ -118,6 +125,58 @@ def test_claims_reduce_mean_axis1() -> None:
         CONFIG,
     )
     assert result == Claimed(rule_id=MEAN_RULE, result_type=TENSOR_F32_CPU_1D)
+
+
+def test_claims_classification_head_steps() -> None:
+    axis = (
+        KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+    )
+    softmax = PLUGIN.claim(_call("tensorflow.nn.softmax", (TENSOR_F32_CPU_2D,), keywords=axis), CONFIG)
+    assert softmax == Claimed(rule_id=SOFTMAX_RULE, result_type=TENSOR_F32_CPU_2D)
+    argmax = PLUGIN.claim(_call("tensorflow.argmax", (TENSOR_F32_CPU_2D,), keywords=axis), CONFIG)
+    assert argmax == Claimed(rule_id=ARGMAX_RULE, result_type=TENSOR_I64_CPU_1D)
+
+
+@pytest.mark.parametrize(
+    ("target", "keywords"),
+    (
+        ("tensorflow.nn.softmax", ()),
+        (
+            "tensorflow.nn.softmax",
+            (
+                KeywordArg(
+                    name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=0)
+                ),
+            ),
+        ),
+        (
+            "tensorflow.argmax",
+            (
+                KeywordArg(
+                    name="axis", arg_type="int", literal=ClaimLiteral(is_literal=False, value=None)
+                ),
+            ),
+        ),
+        (
+            "tensorflow.argmax",
+            (
+                KeywordArg(
+                    name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)
+                ),
+                KeywordArg(
+                    name="output_type",
+                    arg_type="dtype",
+                    literal=ClaimLiteral(is_literal=True, value="int32"),
+                ),
+            ),
+        ),
+    ),
+)
+def test_classification_head_near_misses_remain_fallback(
+    target: str, keywords: tuple[KeywordArg, ...]
+) -> None:
+    result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_2D,), keywords=keywords), CONFIG)
+    assert isinstance(result, Rejected)
 
 
 def test_rejects_matmul_wrong_rank() -> None:

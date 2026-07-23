@@ -1,6 +1,6 @@
 # rextio-tensorflow
 
-**Unreleased 0.1.1 native-AOT Alpha compatibility hotfix.** The latest released
+**Unreleased 0.1.2 native-AOT Alpha classification-head expansion.** The latest released
 package remains 0.1.0 (released **2026-07-18**).
 
 This is a Rextio **plugin API 1.3** provider that lowers a **tiny, statically
@@ -12,7 +12,7 @@ wheel’s public TFE C API plus a **private** EagerTensor bridge
 
 | Status field | Value |
 | --- | --- |
-| Version | `0.1.1` (`src/rextio_tensorflow/__about__.py`) |
+| Version | `0.1.2` (`src/rextio_tensorflow/__about__.py`) |
 | Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
 | Release state | **Unreleased — do not tag or publish**; latest release is [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
@@ -47,7 +47,7 @@ plugin registration, the generated runtime helper
 
 | Component | Contract | Enforcement / evidence |
 | --- | --- | --- |
-| Package version | `0.1.1` (unreleased) | `__about__.__version__` |
+| Package version | `0.1.2` (unreleased) | `__about__.__version__` |
 | CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
 | Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
 | Rextio package | **`>=0.1.3,<0.2`** | Allowed package range in `pyproject.toml`, not an exact package pin |
@@ -174,6 +174,8 @@ same constraints and fails with `ValueError` (not `assert`).
 | Add (call) | `tf.add` / `tf.math.add` | See add pairs below | **None** | max rank | `rextio-tensorflow/add-call-f32-cpu` | `RXTP-TENSORFLOW-003` |
 | Add (binop) | binary `+` | See add pairs below | n/a | max rank | `rextio-tensorflow/add-binop-f32-cpu` | `RXTP-TENSORFLOW-006` |
 | Reduce mean | `tf.reduce_mean` / `tf.math.reduce_mean` | **2** | **`axis=1` literal** only; optional `keepdims=False` or omitted | **1** | `rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d` | `RXTP-TENSORFLOW-004` |
+| Softmax | `tf.nn.softmax` | **2** | **`axis=1` literal** only | **2** float32 | `rextio-tensorflow/softmax-axis1-f32-cpu-2d` | `RXTP-TENSORFLOW-007` |
+| ArgMax | `tf.argmax` | **2** float32 | **`axis=1` literal** only; default output type only | **1** int64 | `rextio-tensorflow/argmax-axis1-i64-cpu-2d` | `RXTP-TENSORFLOW-008` |
 
 ### Add operand pairs (call and binop)
 
@@ -195,7 +197,8 @@ Declared packages/modules/symbols (`rules/coverage.py`):
 - modules: `tensorflow`, `tensorflow.linalg`, `tensorflow.nn`, `tensorflow.math`
 - symbols: `tensorflow.matmul`, `tensorflow.linalg.matmul`, `tensorflow.nn.relu`,
   `tensorflow.nn.sigmoid`, `tensorflow.add`, `tensorflow.math.add`,
-  `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`
+  `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`, `tensorflow.nn.softmax`,
+  `tensorflow.argmax`
 
 ### Boundary annotation types
 
@@ -205,6 +208,7 @@ Import-free markers (`rextio_tensorflow.types` — never import TensorFlow):
 | --- | --- | --- |
 | `TensorF32Cpu2D` | `rextio-tensorflow/tensor-f32-cpu-2d` | `rextio_tensorflow_runtime::RxtTfTensor` |
 | `TensorF32Cpu1D` | `rextio-tensorflow/tensor-f32-cpu-1d` | `rextio_tensorflow_runtime::RxtTfTensor` |
+| `TensorI64Cpu1D` | `rextio-tensorflow/tensor-i64-cpu-1d` | `rextio_tensorflow_runtime::RxtTfTensor` |
 
 Runtime values remain ordinary `tf.Tensor` / EagerTensor objects. Intermediates
 between helpers stay `TFE_TensorHandle`-native (`RxtTfTensor` RAII). Python
@@ -224,7 +228,9 @@ Lowering emits calls into the exact generated module
 | sigmoid | `rextio_tensorflow_runtime::sigmoid(&x)?` |
 | add / `+` | `rextio_tensorflow_runtime::add(&a, &b)?` |
 | reduce_mean axis=1 | `rextio_tensorflow_runtime::reduce_mean_axis1(&x)?` |
-| boundary extract | `extract_f32_cpu_{1,2}d` |
+| softmax axis=1 | `rextio_tensorflow_runtime::softmax_axis1(&x)?` |
+| argmax axis=1 (int64) | `rextio_tensorflow_runtime::argmax_axis1(&x)?` |
+| boundary extract | `extract_f32_cpu_{1,2}d` / `extract_i64_cpu_1d` |
 | boundary materialize | `materialize_tensor` (via `EagerTensorFromHandle`, ownership transfer) |
 
 ---
@@ -274,7 +280,7 @@ Anything outside the tables above is either:
 - Tensor-data-dependent Python `if` / `for`, `tf.cond`, or `tf.while_loop`
 - Non-float32 dtypes; rank ≠ {1, 2}
 - Rank-1 activations or matmul; rank-3+ / batched matmul
-- Dynamic reduction axes; positional `axis`; `keepdims=True`
+- Dynamic reduction/classification axes; positional `axis`; `keepdims=True`; `tf.argmax(output_type=...)`
 - Matmul transpose / other keywords
 - In-place ops
 - Host resolve (`TFE_TensorHandleResolve`) on the inference path
@@ -350,19 +356,20 @@ Runtime error string prefixes used in contracts include (see
 ### Accepted (claim → native lower)
 
 ```python
-from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D
+from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D, TensorI64Cpu1D
 import tensorflow as tf
 
 def inference(
     x: TensorF32Cpu2D,
     weight: TensorF32Cpu2D,
     bias: TensorF32Cpu1D,
-) -> TensorF32Cpu1D:
+) -> TensorI64Cpu1D:
     h = tf.matmul(x, weight)           # rank-2 → rank-2
     h = tf.nn.relu(h)                  # rank-2 → rank-2
     h = tf.nn.sigmoid(h)               # optional; rank-2 → rank-2
     h = h + bias                       # or tf.add(h, bias); rank-2
-    return tf.reduce_mean(h, axis=1)   # literal axis=1 → rank-1
+    probabilities = tf.nn.softmax(h, axis=1)  # literal axis=1 → rank-2
+    return tf.argmax(probabilities, axis=1)   # default int64 → rank-1
 ```
 
 Also accepted (when types match the tables):
@@ -386,6 +393,8 @@ sigmoid; tensor-dependent control flow remains unsupported.
 | `tf.reduce_mean(x)` without `axis=1` | `Rejected` |
 | `tf.reduce_mean(x, 1)` positional axis | `Rejected` (not statically proven on Alpha) |
 | `tf.reduce_mean(x, axis=0)` | `Rejected` |
+| `tf.nn.softmax(x)` / `tf.nn.softmax(x, axis=0)` | `Rejected` |
+| `tf.argmax(x, axis=1, output_type=tf.int32)` | `Rejected` |
 | `tf.cos(x)` | `NotCovered` |
 | Method-style receiver on a covered call | `NotCovered` |
 | Operand types outside plugin vocabulary on a covered symbol | `Rejected` (`RXTP-TENSORFLOW-010` / op diagnostic) |
@@ -409,23 +418,24 @@ These do **not** transparently fall back to the Python body under API 1.3.
 ## Alpha surface (reference sketch)
 
 ```python
-from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D
+from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D, TensorI64Cpu1D
 import tensorflow as tf
 
 def inference(
     x: TensorF32Cpu2D,
     weight: TensorF32Cpu2D,
     bias: TensorF32Cpu1D,
-) -> TensorF32Cpu1D:
+) -> TensorI64Cpu1D:
     h = tf.matmul(x, weight)
     h = tf.nn.relu(h)
     h = h + bias
-    return tf.reduce_mean(h, axis=1)
+    return tf.argmax(tf.nn.softmax(h, axis=1), axis=1)
 ```
 
 ### Boundary and ABI contract (summary)
 
-- Python boundary types: `TensorF32Cpu2D` / `TensorF32Cpu1D` (import-free markers).
+- Python boundary types: `TensorF32Cpu2D` / `TensorF32Cpu1D` / `TensorI64Cpu1D`
+  (import-free markers); the classification head materializes exactly int64 rank-1 output.
 - Native type: `rextio_tensorflow_runtime::RxtTfTensor` (owned handle RAII;
   clones share `Rc` owner — never an unowned pointer fallback).
 - Extract: private `EagerTensor_Handle` then
@@ -500,11 +510,11 @@ probe is opt-in and does not claim certification when it has not been run.
 | Field | Value |
 | --- | --- |
 | Name | `rextio-tensorflow` |
-| Version | `0.1.1` (unreleased) |
+| Version | `0.1.2` (unreleased) |
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
 | Classifier | `Development Status :: 3 - Alpha` |
 | Release date | Not yet released |
-| Distribution state | **Unreleased — no 0.1.1 tag or PyPI publication**; [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) remains live |
+| Distribution state | **Unreleased — no 0.1.2 tag or PyPI publication**; [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) remains live |
 | License | MIT |
 
 The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
@@ -512,7 +522,7 @@ and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
 `ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
 wheel metadata.
 
-This is the unreleased 0.1.1 source on its integration branch. The tagged
+This is the unreleased 0.1.2 source on its integration branch. The tagged
 public Alpha 0.1.0 remains the latest GitHub/PyPI release; its final CI run
 `29597803215` completed 13/13 jobs successfully, followed by the verified
 no-cache CPython 3.11 installation described above.

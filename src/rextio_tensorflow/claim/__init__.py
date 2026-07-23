@@ -5,7 +5,7 @@ from __future__ import annotations
 from rextio.config.schema import RextioConfig
 from rextio.plugins.api import ClaimResult, ClaimSite, NotCovered
 
-from rextio_tensorflow.claim import activations, add, matmul, reductions
+from rextio_tensorflow.claim import activations, add, classification, matmul, reductions
 
 __all__ = ["claim"]
 
@@ -17,7 +17,7 @@ def claim(site: ClaimSite, config: RextioConfig) -> ClaimResult:
     types, receiver metadata, and static keyword literals.
     """
     del config
-    for lane in (matmul, activations, add, reductions):
+    for lane in (matmul, activations, add, reductions, classification):
         result = lane.try_claim(site)
         if result is not None:
             return result

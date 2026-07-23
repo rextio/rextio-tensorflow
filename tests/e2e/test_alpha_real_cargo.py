@@ -38,7 +38,7 @@ pytestmark = [
 ]
 
 KERNELS = """
-from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D
+from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D, TensorI64Cpu1D
 import tensorflow as tf
 
 
@@ -48,7 +48,7 @@ def inference(
     bias: TensorF32Cpu1D,
     depth: int,
     phase: int,
-) -> TensorF32Cpu1D:
+) -> TensorI64Cpu1D:
     h = tf.matmul(x, weight)
     h = tf.nn.relu(h)
     for layer in range(depth):
@@ -56,8 +56,8 @@ def inference(
             h = tf.nn.sigmoid(h)
         else:
             h = tf.nn.relu(h)
-    h = h + bias
-    return tf.reduce_mean(h, axis=1)
+    probabilities = tf.nn.softmax(h + bias, axis=1)
+    return tf.argmax(probabilities, axis=1)
 """
 
 
@@ -153,6 +153,8 @@ def _tensor_equal(left: object, right: object) -> bool:
         return False
     if left.dtype != right.dtype or left.shape != right.shape:
         return False
+    if left.dtype == tf.int64:
+        return bool(tf.reduce_all(tf.equal(left, right)).numpy())
     return bool(tf.reduce_all(tf.abs(left - right) <= 1e-5).numpy())
 
 
@@ -177,7 +179,8 @@ def _eager_reference(
             hidden = tf.nn.sigmoid(hidden)
         else:
             hidden = tf.nn.relu(hidden)
-    return tf.reduce_mean(hidden + bias, axis=1)
+    probabilities = tf.nn.softmax(hidden + bias, axis=1)
+    return tf.argmax(probabilities, axis=1)
 
 
 def _copy_tensor_args(args: tuple[object, ...]) -> tuple[object, ...]:
@@ -210,7 +213,7 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     assert record["native_status"] == "accepted"
     assert record["route"] == "native-plugin:rextio-tensorflow"
     claims = record.get("plugin_claims") or []
-    assert len(claims) == 6
+    assert len(claims) == 7
     claim_rules = {claim["rule_id"] for claim in claims}
     assert "rextio-tensorflow/matmul-f32-cpu-2d" in claim_rules
     assert "rextio-tensorflow/relu-f32-cpu-2d" in claim_rules
@@ -219,7 +222,8 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
         "rextio-tensorflow/add-call-f32-cpu" in claim_rules
         or "rextio-tensorflow/add-binop-f32-cpu" in claim_rules
     )
-    assert "rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d" in claim_rules
+    assert "rextio-tensorflow/softmax-axis1-f32-cpu-2d" in claim_rules
+    assert "rextio-tensorflow/argmax-axis1-i64-cpu-2d" in claim_rules
 
     rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
         encoding="utf-8"
@@ -228,7 +232,8 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     assert "rextio_tensorflow_runtime::matmul" in rust
     assert "rextio_tensorflow_runtime::relu" in rust
     assert "rextio_tensorflow_runtime::add" in rust
-    assert "rextio_tensorflow_runtime::reduce_mean_axis1" in rust
+    assert "rextio_tensorflow_runtime::softmax_axis1" in rust
+    assert "rextio_tensorflow_runtime::argmax_axis1" in rust
     assert "EagerTensor_Handle" in rust or "_Z18EagerTensor_Handle" in rust
     assert "TFE_Execute" in rust
     assert "RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD" in rust
@@ -248,6 +253,8 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     assert 'set_bool("grad_b", false)' in rust
     assert "TF_AllocateTensor" in rust
     assert "TF_TensorData" in rust
+    assert "TF_INT64" in rust
+    assert "axis_one_scalar" in rust
     assert "Rc<OwnedTensorHandle>" in rust
     assert "unsafe impl Send" not in rust
     assert "RTLD_DEFAULT" not in rust
@@ -283,7 +290,7 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
 
     assert isinstance(native_out, tf.Tensor)
     assert "CPU" in native_out.device
-    assert native_out.dtype == tf.float32
+    assert native_out.dtype == tf.int64
     assert len(native_out.shape) == 1
     assert int(native_out.shape[0]) == 4
 
@@ -313,7 +320,7 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     gc.collect()
     assert isinstance(held, tf.Tensor)
     assert "CPU" in held.device
-    assert held.dtype == tf.float32
+    assert held.dtype == tf.int64
     assert _tensor_equal(held, eager)
 
     # Fail-closed boundary on annotation-violating runtime values.

@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 0.1.1
+      - 0.1.2
   pull_request:
   workflow_dispatch:
 
@@ -184,7 +185,7 @@ jobs:
           import importlib.metadata
           import sys
 
-          assert importlib.metadata.version("rextio-tensorflow") == "0.1.1"
+          assert importlib.metadata.version("rextio-tensorflow") == "0.1.2"
           requirements = importlib.metadata.requires("rextio-tensorflow") or []
           assert "tensorflow==2.21.0" in requirements
           assert not any(name == "tensorflow" or name.startswith("tensorflow.") for name in sys.modules)

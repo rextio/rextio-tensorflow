@@ -19,6 +19,8 @@ COVERAGE = CoverageDecl(
         "tensorflow.math.add",
         "tensorflow.reduce_mean",
         "tensorflow.math.reduce_mean",
+        "tensorflow.nn.softmax",
+        "tensorflow.argmax",
     ),
 )
 

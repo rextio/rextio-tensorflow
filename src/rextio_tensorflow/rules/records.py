@@ -146,6 +146,50 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/softmax-axis1-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.softmax(x, axis=1) on a float32 CPU rank-2 tensor",
+        ),
+        constraint=(
+            "One float32 CPU rank-2 tensor plus literal keyword axis=1 and no "
+            "other keywords. Softmax runs on the rank-2 final axis and returns "
+            "a float32 CPU rank-2 tensor. Dynamic or alternate axes remain "
+            "outside the Alpha surface."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-007",
+        guidance=(
+            "Write tf.nn.softmax(x, axis=1) with a TensorF32Cpu2D operand and "
+            "a static axis=1 literal."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/argmax-axis1-i64-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.argmax(x, axis=1) with default int64 output on float32 CPU rank-2",
+        ),
+        constraint=(
+            "One float32 CPU rank-2 tensor plus literal keyword axis=1 and no "
+            "other keywords. The owned TFE ArgMax wrapper receives a scalar "
+            "int32 axis handle and materializes exactly an int64 CPU rank-1 "
+            "EagerTensor. output_type overrides and dynamic axes are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-008",
+        guidance=(
+            "Write tf.argmax(x, axis=1) with a TensorF32Cpu2D operand and omit "
+            "output_type to retain TensorFlow's default int64 result."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/unsupported-tensor-surface",
         provider="rextio-tensorflow",
         scope=RuleScope(
@@ -165,8 +209,9 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
             "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, "
-            "reduce_mean(axis=1), and sigmoid; other dtypes, devices, ranks, "
-            "and dynamic literals remain on the fallback."
+            "reduce_mean(axis=1), sigmoid, softmax(axis=1), and default-int64 "
+            "argmax(axis=1); other dtypes, devices, ranks, and dynamic literals "
+            "remain on the fallback."
         ),
         stability="experimental",
         verified=False,
