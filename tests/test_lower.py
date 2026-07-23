@@ -19,7 +19,7 @@ from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE, TANH_RU
 from rextio_tensorflow.claim.add import ADD_BINOP_RULE
 from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
-from rextio_tensorflow.claim.reductions import MEAN_RULE
+from rextio_tensorflow.claim.reductions import MEAN_RULE, SUM_RULE
 from rextio_tensorflow.diagnostics import (
     TENSOR_F32_CPU_1D,
     TENSOR_F32_CPU_2D,
@@ -202,6 +202,32 @@ def test_lower_reduce_mean_axis1() -> None:
     assert lowered.rust == "rextio_tensorflow_runtime::reduce_mean_axis1(&h)?"
 
 
+def test_lower_reduce_sum_axis1() -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.reduce_sum",
+        operand_types=(TENSOR_F32_CPU_2D,),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=SUM_RULE,
+        result_type=TENSOR_F32_CPU_1D,
+        keywords=(
+            KeywordArg(
+                name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)
+            ),
+            KeywordArg(
+                name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=False)
+            ),
+        ),
+    )
+    lowered = PLUGIN.lower(
+        claimed,
+        LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),
+    )
+    assert lowered.rust == "rextio_tensorflow_runtime::reduce_sum_axis1(&h)?"
+
+
 @pytest.mark.parametrize(
     ("target", "rule", "result_type", "helper"),
     (
@@ -263,6 +289,7 @@ def test_classification_lower_revalidates_default_int64_contract() -> None:
         ("tensorflow.nn.softmax", SOFTMAX_RULE, TENSOR_F32_CPU_2D),
         ("tensorflow.argmax", ARGMAX_RULE, TENSOR_I64_CPU_1D),
         ("tensorflow.reduce_mean", MEAN_RULE, TENSOR_F32_CPU_1D),
+        ("tensorflow.reduce_sum", SUM_RULE, TENSOR_F32_CPU_1D),
     ),
 )
 def test_lower_rejects_forged_duplicate_literal_axis_metadata(

@@ -10,6 +10,10 @@ Changelog and Semantic Versioning conventions.
 - Add `tf.nn.tanh(x)` for one positional float32 CPU rank-2 tensor with no
   keywords. The owned TFE `Tanh` operation reuses the existing same-wheel,
   RAII, eager-context, and float32 rank-2 result validation path.
+- Add `tf.reduce_sum(x, axis=1[, keepdims=False])` for float32 CPU rank-2
+  tensors. The owned TFE `Sum` path reuses the rank-1 axis handle, int32
+  `Tidx`, RAII ownership, and rank-1 result validation of reduce-mean; dynamic,
+  positional, duplicate, wrong, and extra metadata remains fail-closed.
 
 - Narrow CPU inference classification-head lane: rank-2 float32
   `tf.nn.softmax(axis=1)` followed by `tf.argmax(axis=1)` with the default

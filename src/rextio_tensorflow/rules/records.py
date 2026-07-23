@@ -146,6 +146,31 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.reduce_sum(x, axis=1) on float32 CPU rank-2 tensors "
+                "(literal axis keyword)"
+            ),
+        ),
+        constraint=(
+            "One float32 CPU rank-2 tensor plus literal keyword axis=1; "
+            "keepdims omitted or False. Positional or dynamic axes, duplicate "
+            "metadata, and extra keywords are not claimed. The owned TFE Sum "
+            "wrapper returns a float32 CPU rank-1 EagerTensor."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-011",
+        guidance=(
+            "Write tf.reduce_sum(x, axis=1) with a TensorF32Cpu2D operand and "
+            "a static axis=1 literal."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/tanh-f32-cpu-2d",
         provider="rextio-tensorflow",
         scope=RuleScope(
@@ -229,7 +254,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
             "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, "
-            "reduce_mean(axis=1), sigmoid, tanh, softmax(axis=1), and default-int64 "
+            "reduce_mean(axis=1), reduce_sum(axis=1), sigmoid, tanh, softmax(axis=1), and default-int64 "
             "argmax(axis=1); other dtypes, devices, ranks, and dynamic literals "
             "remain on the fallback."
         ),

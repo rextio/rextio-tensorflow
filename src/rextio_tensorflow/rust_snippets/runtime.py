@@ -1234,7 +1234,7 @@ mod rextio_tensorflow_runtime {
         Python::attach(|_py| unary(input, "Softmax"))
     }
 
-    fn mean_axis_handle(
+    fn reduction_axis_handle(
         context: Rc<BorrowedContext>,
     ) -> PyResult<Rc<OwnedTensorHandle>> {
         let api = context.api;
@@ -1242,7 +1242,7 @@ mod rextio_tensorflow_runtime {
         let tensor = OwnedTfTensor::axis_one(api)?;
         let raw = unsafe { (api.tfe_new_tensor_handle)(tensor.raw, status.pointer()) };
         let pending = PendingHandle::new(api, raw);
-        status.check("TFE_NewTensorHandle(mean axis)")?;
+        status.check("TFE_NewTensorHandle(reduction axis)")?;
         // TFE_NewTensorHandle retains the Tensor storage; the temporary
         // TF_Tensor remains caller-owned and is deleted immediately here.
         drop(tensor);
@@ -1264,14 +1264,12 @@ mod rextio_tensorflow_runtime {
         pending.into_owned(context)
     }
 
-    /// Reduce mean along the statically proven axis [1], keep_dims=false.
-    pub fn reduce_mean_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
-        Python::attach(|_py| {
-            let status = OwnedStatus::new(input.inner.api)?;
-            let context = input.context();
-            let device = input.backing_device()?;
-            let axis = mean_axis_handle(Rc::clone(&context))?;
-            let op = OwnedOp::new(Rc::clone(&context), "Mean", &status)?;
+    fn reduce_axis1(input: &RxtTfTensor, op_name: &str) -> PyResult<RxtTfTensor> {
+        let status = OwnedStatus::new(input.inner.api)?;
+        let context = input.context();
+        let device = input.backing_device()?;
+        let axis = reduction_axis_handle(Rc::clone(&context))?;
+        let op = OwnedOp::new(Rc::clone(&context), op_name, &status)?;
             op.set_device(&device, &status)?;
             op.add_input(input.pointer(), &status)?;
             op.add_input(axis.raw, &status)?;
@@ -1281,8 +1279,17 @@ mod rextio_tensorflow_runtime {
             let result =
                 RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
             result.validate_f32(1)?;
-            Ok(result)
-        })
+        Ok(result)
+    }
+
+    /// Reduce mean along the statically proven axis [1], keep_dims=false.
+    pub fn reduce_mean_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| reduce_axis1(input, "Mean"))
+    }
+
+    /// Reduce sum along the statically proven axis [1], keep_dims=false.
+    pub fn reduce_sum_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| reduce_axis1(input, "Sum"))
     }
 
     /// ArgMax with the statically-proven scalar axis=1 and default int64 output.

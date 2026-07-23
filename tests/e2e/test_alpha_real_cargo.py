@@ -11,6 +11,7 @@ images.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import sys
@@ -68,6 +69,10 @@ def classify_with_class_input(
     # The classes parameter intentionally exercises its exact native boundary;
     # returning a newly computed tensor preserves Python/native identity semantics.
     return tf.argmax(tf.nn.softmax(logits, axis=1), axis=1)
+
+
+def reduce_sum_axis1(x: TensorF32Cpu2D) -> TensorF32Cpu1D:
+    return tf.reduce_sum(x, axis=1, keepdims=False)
 """
 
 
@@ -431,6 +436,87 @@ def test_i64_parameter_boundary_real_cargo(project: CertifiedProject) -> None:
     assert held.dtype == tf.int64
     assert held.shape == (4,)
     assert _tensor_equal(held, expected)
+
+
+def test_reduce_sum_axis1_real_cargo(project: CertifiedProject) -> None:
+    """Certify Sum's axis-handle ownership, edge semantics, and boundary guards."""
+    tf = _import_tf()
+    record = _route_of(project, "tf_app.kernels.reduce_sum_axis1")
+    assert record["native_status"] == "accepted"
+    assert record["route"] == "native-plugin:rextio-tensorflow"
+    assert [claim["rule_id"] for claim in record.get("plugin_claims") or []] == [
+        "rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d"
+    ]
+
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "rextio_tensorflow_runtime::reduce_sum_axis1" in rust
+    assert 'OwnedOp::new(Rc::clone(&context), "Sum", &status)' in rust
+    assert "TFE_NewTensorHandle(reduction axis)" in rust
+
+    regular = tf.constant([[1.5, -2.0, 3.0], [-4.0, 0.5, 1.0]], dtype=tf.float32)
+    regular_snapshot = tf.identity(regular)
+    checker = project.equivalence_checker(
+        "tf_app.kernels.reduce_sum_axis1",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_regular = checker(regular)
+    eager_regular = tf.reduce_sum(regular_snapshot, axis=1, keepdims=False)
+    assert _tensor_equal(native_regular, eager_regular)
+    assert _tensor_equal(regular, regular_snapshot)
+    assert native_regular.dtype == tf.float32
+    assert native_regular.shape == (2,)
+    assert "CPU" in native_regular.device
+
+    # Empty axis lanes retain rank-1 output and use TensorFlow's own Sum semantics.
+    empty = tf.constant([[], []], shape=(2, 0), dtype=tf.float32)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import reduce_sum_axis1
+
+        native_empty = reduce_sum_axis1(empty)
+    eager_empty = tf.reduce_sum(empty, axis=1, keepdims=False)
+    assert _tensor_equal(native_empty, eager_empty)
+    assert native_empty.shape == (2,)
+
+    # Compare exceptional floating values by class and preserve zero's sign exactly
+    # relative to eager TensorFlow, rather than treating NaN as ordinary equality.
+    special = tf.constant(
+        [[float("nan"), 1.0], [float("inf"), float("-inf")], [-0.0, 0.0]],
+        dtype=tf.float32,
+    )
+    with _native_mode(project, "native"):
+        from tf_app.kernels import reduce_sum_axis1
+
+        native_special = reduce_sum_axis1(special)
+    eager_special = tf.reduce_sum(special, axis=1, keepdims=False)
+    native_values = native_special.numpy().tolist()
+    eager_values = eager_special.numpy().tolist()
+    assert math.isnan(native_values[0]) and math.isnan(eager_values[0])
+    assert math.isnan(native_values[1]) and math.isnan(eager_values[1])
+    assert native_values[2] == eager_values[2] == 0.0
+    assert math.copysign(1.0, native_values[2]) == math.copysign(1.0, eager_values[2])
+
+    with _native_mode(project, "native"):
+        from tf_app.kernels import reduce_sum_axis1
+
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            reduce_sum_axis1(tf.constant([[1.0]], dtype=tf.float64))
+        with pytest.raises(Exception, match="rank-2"):
+            reduce_sum_axis1(tf.constant([1.0], dtype=tf.float32))
+
+    held_input = tf.identity(regular_snapshot)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import reduce_sum_axis1
+
+        held = reduce_sum_axis1(held_input)
+    del held_input
+    import gc
+
+    gc.collect()
+    assert _tensor_equal(held, eager_regular)
 
 
 class _native_mode:

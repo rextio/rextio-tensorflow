@@ -18,7 +18,7 @@ from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE, TANH_RU
 from rextio_tensorflow.claim.add import ADD_BINOP_RULE, ADD_CALL_RULE
 from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
-from rextio_tensorflow.claim.reductions import MEAN_RULE
+from rextio_tensorflow.claim.reductions import MEAN_RULE, SUM_RULE
 from rextio_tensorflow.diagnostics import (
     TENSOR_F32_CPU_1D,
     TENSOR_F32_CPU_2D,
@@ -132,6 +132,20 @@ def test_claims_reduce_mean_axis1() -> None:
     assert result == Claimed(rule_id=MEAN_RULE, result_type=TENSOR_F32_CPU_1D)
 
 
+def test_claims_reduce_sum_axis1_with_keepdims_false() -> None:
+    keywords = (
+        KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+        KeywordArg(
+            name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=False)
+        ),
+    )
+    result = PLUGIN.claim(
+        _call("tensorflow.reduce_sum", (TENSOR_F32_CPU_2D,), keywords=keywords),
+        CONFIG,
+    )
+    assert result == Claimed(rule_id=SUM_RULE, result_type=TENSOR_F32_CPU_1D)
+
+
 def test_claims_classification_head_steps() -> None:
     axis = (
         KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
@@ -144,7 +158,12 @@ def test_claims_classification_head_steps() -> None:
 
 @pytest.mark.parametrize(
     "target",
-    ("tensorflow.nn.softmax", "tensorflow.argmax", "tensorflow.reduce_mean"),
+    (
+        "tensorflow.nn.softmax",
+        "tensorflow.argmax",
+        "tensorflow.reduce_mean",
+        "tensorflow.reduce_sum",
+    ),
 )
 def test_rejects_duplicate_literal_axis_metadata_at_claim(target: str) -> None:
     duplicate_axis = (
@@ -153,6 +172,45 @@ def test_rejects_duplicate_literal_axis_metadata_at_claim(target: str) -> None:
     )
     result = PLUGIN.claim(
         _call(target, (TENSOR_F32_CPU_2D,), keywords=duplicate_axis), CONFIG
+    )
+    assert isinstance(result, Rejected)
+
+
+@pytest.mark.parametrize(
+    "keywords",
+    (
+        (),
+        (KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=0)),),
+        (KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=False, value=None)),),
+        (
+            KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+            KeywordArg(name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=True)),
+        ),
+        (
+            KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+            KeywordArg(name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=False, value=None)),
+        ),
+        (
+            KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+            KeywordArg(name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=False)),
+            KeywordArg(name="keepdims", arg_type="bool", literal=ClaimLiteral(is_literal=True, value=False)),
+        ),
+        (
+            KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+            KeywordArg(name="name", arg_type="str", literal=ClaimLiteral(is_literal=True, value="bad")),
+        ),
+    ),
+)
+def test_reduce_sum_near_misses_remain_fallback(keywords: tuple[KeywordArg, ...]) -> None:
+    result = PLUGIN.claim(
+        _call("tensorflow.reduce_sum", (TENSOR_F32_CPU_2D,), keywords=keywords), CONFIG
+    )
+    assert isinstance(result, Rejected)
+
+
+def test_reduce_sum_positional_axis_remains_fallback() -> None:
+    result = PLUGIN.claim(
+        _call("tensorflow.reduce_sum", (TENSOR_F32_CPU_2D, "int")), CONFIG
     )
     assert isinstance(result, Rejected)
 
