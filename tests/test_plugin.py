@@ -45,7 +45,7 @@ def test_entry_point_factory_returns_plugin() -> None:
     assert isinstance(obj, RextioTensorflowPlugin)
     assert obj.plugin_id == PLUGIN_ID
     assert obj.api_version == REQUIRED_PLUGIN_API == "1.3"
-    assert __version__ == "0.1.1"
+    assert __version__ == "0.1.2"
 
 
 def test_core_loader_accepts_the_plugin() -> None:
@@ -112,6 +112,8 @@ def test_covers_alpha_surface() -> None:
     assert "tensorflow.matmul" in coverage.symbols
     assert "tensorflow.nn.relu" in coverage.symbols
     assert "tensorflow.reduce_mean" in coverage.symbols
+    assert "tensorflow.nn.softmax" in coverage.symbols
+    assert "tensorflow.argmax" in coverage.symbols
 
 
 def test_rule_records_are_namespaced_and_well_formed() -> None:
@@ -137,6 +139,7 @@ def test_type_vocabulary_keys_and_boundary() -> None:
     assert {t.key for t in types} == {
         "rextio-tensorflow/tensor-f32-cpu-2d",
         "rextio-tensorflow/tensor-f32-cpu-1d",
+        "rextio-tensorflow/tensor-i64-cpu-1d",
     }
     for plugin_type in types:
         assert isinstance(plugin_type, PluginType)
@@ -155,7 +158,12 @@ def test_type_vocabulary_keys_and_boundary() -> None:
     assert spellings == {
         "rextio_tensorflow.types.TensorF32Cpu2D",
         "rextio_tensorflow.types.TensorF32Cpu1D",
+        "rextio_tensorflow.types.TensorI64Cpu1D",
     }
+    by_key = {plugin_type.key: plugin_type for plugin_type in types}
+    i64_conversion = by_key["rextio-tensorflow/tensor-i64-cpu-1d"].conversion
+    assert i64_conversion is not None
+    assert "extract_i64_cpu_1d" in i64_conversion.param_expr
 
 
 def test_crate_dependencies_empty() -> None:

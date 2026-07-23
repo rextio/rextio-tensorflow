@@ -5,6 +5,20 @@ Changelog and Semantic Versioning conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Narrow CPU inference classification-head lane: rank-2 float32
+  `tf.nn.softmax(axis=1)` followed by `tf.argmax(axis=1)` with the default
+  int64 rank-1 result. The generated runtime owns `Softmax`/`ArgMax` TFE ops,
+  uses a scalar int32 axis handle, validates/materializes the int64 boundary,
+  and preserves the existing RAII, provenance, exact-version, and fail-closed
+  contracts.
+- Claim/lower/fallback/lifetime coverage and real-Cargo numerical, shape, and
+  dtype E2E proof for the classification head on the existing macOS arm64 and
+  Linux x86_64 CI profiles.
+- Exact CPU int64 rank-1 parameter extraction for `TensorI64Cpu1D`, including
+  real-Cargo compile/runtime, rejection, materialization, and lifetime proof.
+
 ### Changed
 
 - Prepared 0.1.1 compatibility with `rextio` 0.1.5 / plugin API 1.4 while

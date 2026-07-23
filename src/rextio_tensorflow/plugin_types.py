@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from rextio.plugins.api import BoundaryConversion, PluginType
 
-from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D
+from rextio_tensorflow.diagnostics import (
+    TENSOR_F32_CPU_1D,
+    TENSOR_F32_CPU_2D,
+    TENSOR_I64_CPU_1D,
+)
 from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
 
 _BOUNDARY_SUPPORT = runtime_module_helpers()
@@ -35,6 +39,11 @@ PLUGIN_TYPES: tuple[PluginType, ...] = (
         TENSOR_F32_CPU_1D,
         "TensorF32Cpu1D",
         "extract_f32_cpu_1d",
+    ),
+    _tensor_type(
+        TENSOR_I64_CPU_1D,
+        "TensorI64Cpu1D",
+        "extract_i64_cpu_1d",
     ),
 )
 

@@ -28,6 +28,7 @@ mod rextio_tensorflow_runtime {
 
     const TF_FLOAT: c_int = 1;
     const TF_INT32: c_int = 3;
+    const TF_INT64: c_int = 9;
     const EXPECTED_TF_VERSION: &str = "2.21.0";
 
     // Private ABI bridge symbols (Itanium mangling). Artifact-level nm of the
@@ -829,11 +830,12 @@ mod rextio_tensorflow_runtime {
             Ok(rank)
         }
 
-        fn validate(&self, expected_rank: c_int) -> PyResult<()> {
-            if unsafe { (self.inner.api.tfe_tensor_handle_data_type)(self.inner.raw) }
-                != TF_FLOAT
-            {
-                return Err(value_error("expected a float32 tensor"));
+        fn validate_typed(&self, expected_type: c_int, expected_rank: c_int) -> PyResult<()> {
+            let actual_type = unsafe { (self.inner.api.tfe_tensor_handle_data_type)(self.inner.raw) };
+            if actual_type != expected_type {
+                let expected = if expected_type == TF_FLOAT { "float32" } else { "int64" };
+                let article = if expected_type == TF_FLOAT { "a" } else { "an" };
+                return Err(value_error(format!("expected {article} {expected} tensor")));
             }
             let rank = self.rank()?;
             if rank != expected_rank {
@@ -859,6 +861,14 @@ mod rextio_tensorflow_runtime {
             }
             let _ = self.backing_device()?;
             Ok(())
+        }
+
+        fn validate_f32(&self, expected_rank: c_int) -> PyResult<()> {
+            self.validate_typed(TF_FLOAT, expected_rank)
+        }
+
+        fn validate_i64(&self, expected_rank: c_int) -> PyResult<()> {
+            self.validate_typed(TF_INT64, expected_rank)
         }
     }
 
@@ -891,6 +901,38 @@ mod rextio_tensorflow_runtime {
             let data = unsafe { (api.tf_tensor_data)(tensor.raw.cast_const()) };
             if data.is_null() {
                 return Err(runtime_error("TF_TensorData returned null for mean axis"));
+            }
+            unsafe {
+                std::ptr::write(data.cast::<i32>(), 1i32);
+            }
+            Ok(tensor)
+        }
+
+        fn axis_one_scalar(api: &'static Api) -> PyResult<Self> {
+            // ArgMax consumes one scalar int32 axis. Keep a non-null pointer
+            // even for rank zero so the generated call is ABI-conservative.
+            let dimensions: [i64; 0] = [];
+            let raw = unsafe {
+                (api.tf_allocate_tensor)(
+                    TF_INT32,
+                    dimensions.as_ptr(),
+                    0,
+                    std::mem::size_of::<i32>(),
+                )
+            };
+            if raw.is_null() {
+                return Err(runtime_error("TF_AllocateTensor failed for argmax axis"));
+            }
+            let tensor = Self { api, raw };
+            let byte_size = unsafe { (api.tf_tensor_byte_size)(tensor.raw.cast_const()) };
+            if byte_size != std::mem::size_of::<i32>() {
+                return Err(runtime_error(format!(
+                    "unexpected argmax-axis tensor byte size {byte_size}"
+                )));
+            }
+            let data = unsafe { (api.tf_tensor_data)(tensor.raw.cast_const()) };
+            if data.is_null() {
+                return Err(runtime_error("TF_TensorData returned null for argmax axis"));
             }
             unsafe {
                 std::ptr::write(data.cast::<i32>(), 1i32);
@@ -1030,6 +1072,7 @@ mod rextio_tensorflow_runtime {
     fn extract_common(
         py: Python<'_>,
         value: &Bound<'_, PyAny>,
+        expected_type: c_int,
         expected_rank: c_int,
     ) -> PyResult<RxtTfTensor> {
         let api = load_api(py)?;
@@ -1056,7 +1099,15 @@ mod rextio_tensorflow_runtime {
         let pending = PendingHandle::new(api, raw);
         status.check("TFE_TensorHandleCopySharingTensor(input)")?;
         let tensor = RxtTfTensor::from_pending(pending, context)?;
-        tensor.validate(expected_rank)?;
+        if expected_type == TF_FLOAT {
+            tensor.validate_f32(expected_rank)?;
+        } else if expected_type == TF_INT64 {
+            tensor.validate_i64(expected_rank)?;
+        } else {
+            return Err(runtime_error(format!(
+                "unsupported generated boundary dtype enum {expected_type}"
+            )));
+        }
         Ok(tensor)
     }
 
@@ -1064,14 +1115,21 @@ mod rextio_tensorflow_runtime {
         py: Python<'_>,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<RxtTfTensor> {
-        extract_common(py, value, 2)
+        extract_common(py, value, TF_FLOAT, 2)
     }
 
     pub fn extract_f32_cpu_1d(
         py: Python<'_>,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<RxtTfTensor> {
-        extract_common(py, value, 1)
+        extract_common(py, value, TF_FLOAT, 1)
+    }
+
+    pub fn extract_i64_cpu_1d(
+        py: Python<'_>,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<RxtTfTensor> {
+        extract_common(py, value, TF_INT64, 1)
     }
 
     pub fn materialize_tensor(
@@ -1107,7 +1165,7 @@ mod rextio_tensorflow_runtime {
         op.add_input(input.pointer(), &status)?;
         op.set_type("T", TF_FLOAT)?;
         let result = RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
-        result.validate(2)?;
+        result.validate_f32(2)?;
         Ok(result)
     }
 
@@ -1140,7 +1198,7 @@ mod rextio_tensorflow_runtime {
             op.set_bool("grad_b", false)?;
         }
         let result = RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
-        result.validate(expected_rank)?;
+        result.validate_f32(expected_rank)?;
         Ok(result)
     }
 
@@ -1167,6 +1225,11 @@ mod rextio_tensorflow_runtime {
         Python::attach(|_py| unary(input, "Sigmoid"))
     }
 
+    /// Softmax on the statically-proven final rank-2 axis (axis=1).
+    pub fn softmax_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| unary(input, "Softmax"))
+    }
+
     fn mean_axis_handle(
         context: Rc<BorrowedContext>,
     ) -> PyResult<Rc<OwnedTensorHandle>> {
@@ -1178,6 +1241,21 @@ mod rextio_tensorflow_runtime {
         status.check("TFE_NewTensorHandle(mean axis)")?;
         // TFE_NewTensorHandle retains the Tensor storage; the temporary
         // TF_Tensor remains caller-owned and is deleted immediately here.
+        drop(tensor);
+        pending.into_owned(context)
+    }
+
+    fn argmax_axis_handle(
+        context: Rc<BorrowedContext>,
+    ) -> PyResult<Rc<OwnedTensorHandle>> {
+        let api = context.api;
+        let status = OwnedStatus::new(api)?;
+        let tensor = OwnedTfTensor::axis_one_scalar(api)?;
+        let raw = unsafe { (api.tfe_new_tensor_handle)(tensor.raw, status.pointer()) };
+        let pending = PendingHandle::new(api, raw);
+        status.check("TFE_NewTensorHandle(argmax axis)")?;
+        // The eager handle retains Tensor storage; `tensor` is deleted before
+        // the returned RAII handle can be used by ArgMax.
         drop(tensor);
         pending.into_owned(context)
     }
@@ -1198,7 +1276,27 @@ mod rextio_tensorflow_runtime {
             op.set_bool("keep_dims", false)?;
             let result =
                 RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
-            result.validate(1)?;
+            result.validate_f32(1)?;
+            Ok(result)
+        })
+    }
+
+    /// ArgMax with the statically-proven scalar axis=1 and default int64 output.
+    pub fn argmax_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            let status = OwnedStatus::new(input.inner.api)?;
+            let context = input.context();
+            let device = input.backing_device()?;
+            let axis = argmax_axis_handle(Rc::clone(&context))?;
+            let op = OwnedOp::new(Rc::clone(&context), "ArgMax", &status)?;
+            op.set_device(&device, &status)?;
+            op.add_input(input.pointer(), &status)?;
+            op.add_input(axis.raw, &status)?;
+            op.set_type("T", TF_FLOAT)?;
+            op.set_type("Tidx", TF_INT32)?;
+            op.set_type("output_type", TF_INT64)?;
+            let result = RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
+            result.validate_i64(1)?;
             Ok(result)
         })
     }
