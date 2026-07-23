@@ -138,6 +138,21 @@ def test_claims_classification_head_steps() -> None:
 
 
 @pytest.mark.parametrize(
+    "target",
+    ("tensorflow.nn.softmax", "tensorflow.argmax", "tensorflow.reduce_mean"),
+)
+def test_rejects_duplicate_literal_axis_metadata_at_claim(target: str) -> None:
+    duplicate_axis = (
+        KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+        KeywordArg(name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)),
+    )
+    result = PLUGIN.claim(
+        _call(target, (TENSOR_F32_CPU_2D,), keywords=duplicate_axis), CONFIG
+    )
+    assert isinstance(result, Rejected)
+
+
+@pytest.mark.parametrize(
     ("target", "keywords"),
     (
         ("tensorflow.nn.softmax", ()),

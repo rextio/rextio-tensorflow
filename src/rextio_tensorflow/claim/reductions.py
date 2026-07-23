@@ -29,6 +29,8 @@ def _keyword_map(site: ClaimSite) -> dict[str, object] | None:
     for keyword in site.keywords:
         if not keyword.literal.is_literal:
             return None
+        if keyword.name in values:
+            return None
         values[keyword.name] = keyword.literal.value
     return values
 

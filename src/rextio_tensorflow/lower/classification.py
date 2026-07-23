@@ -19,7 +19,7 @@ from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
 
 def _axis_one(claimed: ClaimSite, operation: str) -> None:
     values = {keyword.name: keyword.literal for keyword in claimed.keywords}
-    if set(values) != {"axis"}:
+    if len(values) != len(claimed.keywords) or set(values) != {"axis"}:
         raise ValueError(
             f"rextio-tensorflow {operation} lower requires only axis=1 literal"
         )

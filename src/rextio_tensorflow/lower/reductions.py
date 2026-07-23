@@ -27,7 +27,7 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
     ):
         raise ValueError("rextio-tensorflow received malformed mean lower metadata")
     values = {kw.name: kw.literal for kw in claimed.keywords}
-    if "axis" not in values:
+    if len(values) != len(claimed.keywords) or "axis" not in values:
         raise ValueError("rextio-tensorflow mean lower requires axis keyword")
     axis_lit = values["axis"]
     if (
