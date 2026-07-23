@@ -7,6 +7,10 @@ Changelog and Semantic Versioning conventions.
 
 ### Added
 
+- Add `tf.nn.tanh(x)` for one positional float32 CPU rank-2 tensor with no
+  keywords. The owned TFE `Tanh` operation reuses the existing same-wheel,
+  RAII, eager-context, and float32 rank-2 result validation path.
+
 - Narrow CPU inference classification-head lane: rank-2 float32
   `tf.nn.softmax(axis=1)` followed by `tf.argmax(axis=1)` with the default
   int64 rank-1 result. The generated runtime owns `Softmax`/`ArgMax` TFE ops,

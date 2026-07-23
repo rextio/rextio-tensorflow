@@ -15,6 +15,7 @@ COVERAGE = CoverageDecl(
         "tensorflow.linalg.matmul",
         "tensorflow.nn.relu",
         "tensorflow.nn.sigmoid",
+        "tensorflow.nn.tanh",
         "tensorflow.add",
         "tensorflow.math.add",
         "tensorflow.reduce_mean",

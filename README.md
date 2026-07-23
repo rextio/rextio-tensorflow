@@ -171,6 +171,7 @@ same constraints and fails with `ValueError` (not `assert`).
 | MatMul | `tf.matmul` / `tf.linalg.matmul` (also `tensorflow.*`) | **2 × 2** only | **None** (no `transpose_*`) | **2** | `rextio-tensorflow/matmul-f32-cpu-2d` | `RXTP-TENSORFLOW-001` |
 | ReLU | `tf.nn.relu` | **2** | **None** | **2** | `rextio-tensorflow/relu-f32-cpu-2d` | `RXTP-TENSORFLOW-002` |
 | Sigmoid | `tf.nn.sigmoid` | **2** | **None** | **2** | `rextio-tensorflow/sigmoid-f32-cpu-2d` | `RXTP-TENSORFLOW-005` |
+| Tanh | `tf.nn.tanh` | **2** | **None** | **2** | `rextio-tensorflow/tanh-f32-cpu-2d` | `RXTP-TENSORFLOW-009` |
 | Add (call) | `tf.add` / `tf.math.add` | See add pairs below | **None** | max rank | `rextio-tensorflow/add-call-f32-cpu` | `RXTP-TENSORFLOW-003` |
 | Add (binop) | binary `+` | See add pairs below | n/a | max rank | `rextio-tensorflow/add-binop-f32-cpu` | `RXTP-TENSORFLOW-006` |
 | Reduce mean | `tf.reduce_mean` / `tf.math.reduce_mean` | **2** | **`axis=1` literal** only; optional `keepdims=False` or omitted | **1** | `rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d` | `RXTP-TENSORFLOW-004` |
@@ -196,7 +197,7 @@ Declared packages/modules/symbols (`rules/coverage.py`):
 - packages: `tensorflow`
 - modules: `tensorflow`, `tensorflow.linalg`, `tensorflow.nn`, `tensorflow.math`
 - symbols: `tensorflow.matmul`, `tensorflow.linalg.matmul`, `tensorflow.nn.relu`,
-  `tensorflow.nn.sigmoid`, `tensorflow.add`, `tensorflow.math.add`,
+  `tensorflow.nn.sigmoid`, `tensorflow.nn.tanh`, `tensorflow.add`, `tensorflow.math.add`,
   `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`, `tensorflow.nn.softmax`,
   `tensorflow.argmax`
 
@@ -231,6 +232,7 @@ Lowering emits calls into the exact generated module
 | matmul | `rextio_tensorflow_runtime::matmul(&a, &b)?` |
 | relu | `rextio_tensorflow_runtime::relu(&x)?` |
 | sigmoid | `rextio_tensorflow_runtime::sigmoid(&x)?` |
+| tanh | `rextio_tensorflow_runtime::tanh(&x)?` |
 | add / `+` | `rextio_tensorflow_runtime::add(&a, &b)?` |
 | reduce_mean axis=1 | `rextio_tensorflow_runtime::reduce_mean_axis1(&x)?` |
 | softmax axis=1 | `rextio_tensorflow_runtime::softmax_axis1(&x)?` |
@@ -249,7 +251,7 @@ All of the following are required for a site to be **Claimed** and lowered:
    `TensorI64Cpu1D` is limited to the classification result and exact rank-1
    function input boundary; it is not accepted as a TensorFlow operation input.
 2. **Functional style only** — covered calls with a **receiver** are
-   `NotCovered` (no method-style receivers on matmul / relu / sigmoid / add /
+   `NotCovered` (no method-style receivers on matmul / relu / sigmoid / tanh / add /
    reduce_mean). Lowering also rejects claimed/rendered receivers with
    `ValueError`.
 3. **Positional operands only** for matmul / relu / sigmoid / add (keywords →

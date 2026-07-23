@@ -146,6 +146,26 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/tanh-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.tanh on float32 CPU rank-2 tensors",
+        ),
+        constraint=(
+            "One positional float32 CPU rank-2 tensor operand and no keywords. "
+            "The active TensorFlow 2.21.0 wheel executes the owned TFE Tanh op; "
+            "the result preserves the operand type."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-009",
+        guidance=(
+            "Call tf.nn.tanh(x) with a TensorF32Cpu2D positional argument."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/softmax-axis1-f32-cpu-2d",
         provider="rextio-tensorflow",
         scope=RuleScope(
@@ -209,7 +229,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
             "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, "
-            "reduce_mean(axis=1), sigmoid, softmax(axis=1), and default-int64 "
+            "reduce_mean(axis=1), sigmoid, tanh, softmax(axis=1), and default-int64 "
             "argmax(axis=1); other dtypes, devices, ranks, and dynamic literals "
             "remain on the fallback."
         ),

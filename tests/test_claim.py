@@ -14,7 +14,7 @@ from rextio.plugins.api import (
     Rejected,
 )
 
-from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE
+from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE, TANH_RULE
 from rextio_tensorflow.claim.add import ADD_BINOP_RULE, ADD_CALL_RULE
 from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
@@ -71,6 +71,11 @@ def test_claims_relu() -> None:
 def test_claims_sigmoid() -> None:
     result = PLUGIN.claim(_call("tensorflow.nn.sigmoid", (TENSOR_F32_CPU_2D,)), CONFIG)
     assert result == Claimed(rule_id=SIGMOID_RULE, result_type=TENSOR_F32_CPU_2D)
+
+
+def test_claims_tanh() -> None:
+    result = PLUGIN.claim(_call("tensorflow.nn.tanh", (TENSOR_F32_CPU_2D,)), CONFIG)
+    assert result == Claimed(rule_id=TANH_RULE, result_type=TENSOR_F32_CPU_2D)
 
 
 def test_claims_add_rank2_bias() -> None:

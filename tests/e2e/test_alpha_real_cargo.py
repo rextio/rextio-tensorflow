@@ -56,6 +56,7 @@ def inference(
             h = tf.nn.sigmoid(h)
         else:
             h = tf.nn.relu(h)
+        h = tf.nn.tanh(h)
     probabilities = tf.nn.softmax(h + bias, axis=1)
     return tf.argmax(probabilities, axis=1)
 
@@ -188,6 +189,7 @@ def _eager_reference(
             hidden = tf.nn.sigmoid(hidden)
         else:
             hidden = tf.nn.relu(hidden)
+        hidden = tf.nn.tanh(hidden)
     probabilities = tf.nn.softmax(hidden + bias, axis=1)
     return tf.argmax(probabilities, axis=1)
 
@@ -222,11 +224,12 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     assert record["native_status"] == "accepted"
     assert record["route"] == "native-plugin:rextio-tensorflow"
     claims = record.get("plugin_claims") or []
-    assert len(claims) == 7
+    assert len(claims) == 8
     claim_rules = {claim["rule_id"] for claim in claims}
     assert "rextio-tensorflow/matmul-f32-cpu-2d" in claim_rules
     assert "rextio-tensorflow/relu-f32-cpu-2d" in claim_rules
     assert "rextio-tensorflow/sigmoid-f32-cpu-2d" in claim_rules
+    assert "rextio-tensorflow/tanh-f32-cpu-2d" in claim_rules
     assert (
         "rextio-tensorflow/add-call-f32-cpu" in claim_rules
         or "rextio-tensorflow/add-binop-f32-cpu" in claim_rules
@@ -240,6 +243,7 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     assert "mod rextio_tensorflow_runtime" in rust
     assert "rextio_tensorflow_runtime::matmul" in rust
     assert "rextio_tensorflow_runtime::relu" in rust
+    assert "rextio_tensorflow_runtime::tanh" in rust
     assert "rextio_tensorflow_runtime::add" in rust
     assert "rextio_tensorflow_runtime::softmax_axis1" in rust
     assert "rextio_tensorflow_runtime::argmax_axis1" in rust

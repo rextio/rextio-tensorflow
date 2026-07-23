@@ -15,7 +15,7 @@ from rextio.plugins.api import (
     ReceiverMeta,
 )
 
-from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE
+from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE, TANH_RULE
 from rextio_tensorflow.claim.add import ADD_BINOP_RULE
 from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
@@ -130,10 +130,11 @@ def test_runtime_helper_has_same_wheel_and_ownership_hardening() -> None:
     assert "panic!" not in helper
 
 
-def test_lower_relu_and_sigmoid() -> None:
+def test_lower_unary_activations() -> None:
     for target, rule, helper in (
         ("tensorflow.nn.relu", RELU_RULE, "relu"),
         ("tensorflow.nn.sigmoid", SIGMOID_RULE, "sigmoid"),
+        ("tensorflow.nn.tanh", TANH_RULE, "tanh"),
     ):
         claimed = ClaimSite(
             kind="call",

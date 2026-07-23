@@ -1,4 +1,4 @@
-"""Lower relu/sigmoid claims after defensive revalidation."""
+"""Lower rank-2 unary activation claims after defensive revalidation."""
 
 from __future__ import annotations
 
@@ -9,19 +9,23 @@ from rextio_tensorflow.claim.activations import (
     RELU_TARGETS,
     SIGMOID_RULE,
     SIGMOID_TARGETS,
+    TANH_RULE,
+    TANH_TARGETS,
 )
 from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_2D
 from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
 
 
 def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
-    """Lower a previously claimed relu/sigmoid site, or return None."""
+    """Lower a previously claimed unary activation site, or return None."""
     if claimed.kind != "call":
         return None
     if claimed.target in RELU_TARGETS:
         return _unary_lower(claimed, ctx, rule_id=RELU_RULE, helper="relu")
     if claimed.target in SIGMOID_TARGETS:
         return _unary_lower(claimed, ctx, rule_id=SIGMOID_RULE, helper="sigmoid")
+    if claimed.target in TANH_TARGETS:
+        return _unary_lower(claimed, ctx, rule_id=TANH_RULE, helper="tanh")
     return None
 
 

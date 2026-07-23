@@ -111,6 +111,7 @@ def test_covers_alpha_surface() -> None:
     assert "tensorflow.nn" in coverage.modules
     assert "tensorflow.matmul" in coverage.symbols
     assert "tensorflow.nn.relu" in coverage.symbols
+    assert "tensorflow.nn.tanh" in coverage.symbols
     assert "tensorflow.reduce_mean" in coverage.symbols
     assert "tensorflow.nn.softmax" in coverage.symbols
     assert "tensorflow.argmax" in coverage.symbols

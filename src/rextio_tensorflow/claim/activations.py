@@ -1,4 +1,4 @@
-"""Fail-closed claims for ``tf.nn.relu`` and ``tf.nn.sigmoid``."""
+"""Fail-closed claims for rank-2 TensorFlow unary activations."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from rextio.plugins.api import Claimed, ClaimResult, ClaimSite, NotCovered
 from rextio_tensorflow.diagnostics import (
     DIAGNOSTIC_RELU,
     DIAGNOSTIC_SIGMOID,
+    DIAGNOSTIC_TANH,
     DIAGNOSTIC_UNSUPPORTED,
     TENSOR_F32_CPU_2D,
     is_tensor_type,
@@ -15,13 +16,15 @@ from rextio_tensorflow.diagnostics import (
 
 RELU_RULE = "rextio-tensorflow/relu-f32-cpu-2d"
 SIGMOID_RULE = "rextio-tensorflow/sigmoid-f32-cpu-2d"
+TANH_RULE = "rextio-tensorflow/tanh-f32-cpu-2d"
 
 RELU_TARGETS = frozenset({"tensorflow.nn.relu", "tf.nn.relu"})
 SIGMOID_TARGETS = frozenset({"tensorflow.nn.sigmoid", "tf.nn.sigmoid"})
+TANH_TARGETS = frozenset({"tensorflow.nn.tanh", "tf.nn.tanh"})
 
 
 def try_claim(site: ClaimSite) -> ClaimResult | None:
-    """Claim relu/sigmoid on float32 CPU rank-2 tensors, else None."""
+    """Claim supported unary activations on float32 CPU rank-2 tensors."""
     if site.kind != "call":
         return None
     if site.target in RELU_TARGETS:
@@ -37,6 +40,13 @@ def try_claim(site: ClaimSite) -> ClaimResult | None:
             rule_id=SIGMOID_RULE,
             diagnostic=DIAGNOSTIC_SIGMOID,
             name="sigmoid",
+        )
+    if site.target in TANH_TARGETS:
+        return _unary_claim(
+            site,
+            rule_id=TANH_RULE,
+            diagnostic=DIAGNOSTIC_TANH,
+            name="tanh",
         )
     return None
 
@@ -83,5 +93,7 @@ __all__ = [
     "RELU_TARGETS",
     "SIGMOID_RULE",
     "SIGMOID_TARGETS",
+    "TANH_RULE",
+    "TANH_TARGETS",
     "try_claim",
 ]
