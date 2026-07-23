@@ -8,7 +8,15 @@ from rextio_tensorflow.claim.add import (
     ADD_BINOP_RULE,
     ADD_CALL_RULE,
     ADD_TARGETS,
+    DIV_BINOP_RULE,
+    DIV_CALL_RULE,
+    DIV_TARGETS,
     MUL_BINOP_RULE,
+    MUL_CALL_RULE,
+    MUL_TARGETS,
+    SUB_BINOP_RULE,
+    SUB_CALL_RULE,
+    SUB_TARGETS,
 )
 from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D
 from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
@@ -21,23 +29,24 @@ _SUPPORTED = {
 }
 def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
     """Lower a previously claimed bounded binary site, or return None."""
-    is_add_binop = claimed.kind == "binop" and claimed.target == "+"
-    is_mul_binop = claimed.kind == "binop" and claimed.target == "*"
-    is_call = claimed.kind == "call" and claimed.target in ADD_TARGETS
-    if not is_add_binop and not is_mul_binop and not is_call:
-        return None
-    if is_mul_binop:
-        expected_rule = MUL_BINOP_RULE
-        operation = "multiply"
-        helper = "mul"
-    elif is_add_binop:
-        expected_rule = ADD_BINOP_RULE
-        operation = "add"
-        helper = "add"
+    binops = {
+        "+": (ADD_BINOP_RULE, "add", "add"),
+        "*": (MUL_BINOP_RULE, "multiply", "mul"),
+        "-": (SUB_BINOP_RULE, "subtract", "sub"),
+        "/": (DIV_BINOP_RULE, "divide", "div"),
+    }
+    calls = {
+        **{target: (ADD_CALL_RULE, "add", "add") for target in ADD_TARGETS},
+        **{target: (MUL_CALL_RULE, "multiply", "mul") for target in MUL_TARGETS},
+        **{target: (SUB_CALL_RULE, "subtract", "sub") for target in SUB_TARGETS},
+        **{target: (DIV_CALL_RULE, "divide", "div") for target in DIV_TARGETS},
+    }
+    if claimed.kind == "binop" and claimed.target in binops:
+        expected_rule, operation, helper = binops[claimed.target]
+    elif claimed.kind == "call" and claimed.target in calls:
+        expected_rule, operation, helper = calls[claimed.target]
     else:
-        expected_rule = ADD_CALL_RULE
-        operation = "add"
-        helper = "add"
+        return None
     if claimed.rule_id != expected_rule:
         raise ValueError(
             f"rextio-tensorflow {operation} lower received mismatched rule_id: "

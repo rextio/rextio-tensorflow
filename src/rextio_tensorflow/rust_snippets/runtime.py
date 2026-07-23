@@ -878,7 +878,7 @@ mod rextio_tensorflow_runtime {
     }
 
     impl OwnedTfTensor {
-        fn axis_one(api: &'static Api) -> PyResult<Self> {
+        fn axis_one(api: &'static Api, axis: i32) -> PyResult<Self> {
             let dimensions = [1i64];
             let raw = unsafe {
                 (api.tf_allocate_tensor)(
@@ -889,26 +889,26 @@ mod rextio_tensorflow_runtime {
                 )
             };
             if raw.is_null() {
-                return Err(runtime_error("TF_AllocateTensor failed for mean axis"));
+                return Err(runtime_error("TF_AllocateTensor failed for reduction axis"));
             }
             let tensor = Self { api, raw };
             let byte_size = unsafe { (api.tf_tensor_byte_size)(tensor.raw.cast_const()) };
             if byte_size != std::mem::size_of::<i32>() {
                 return Err(runtime_error(format!(
-                    "unexpected mean-axis tensor byte size {byte_size}"
+                    "unexpected reduction-axis tensor byte size {byte_size}"
                 )));
             }
             let data = unsafe { (api.tf_tensor_data)(tensor.raw.cast_const()) };
             if data.is_null() {
-                return Err(runtime_error("TF_TensorData returned null for mean axis"));
+                return Err(runtime_error("TF_TensorData returned null for reduction axis"));
             }
             unsafe {
-                std::ptr::write(data.cast::<i32>(), 1i32);
+                std::ptr::write(data.cast::<i32>(), axis);
             }
             Ok(tensor)
         }
 
-        fn axis_one_scalar(api: &'static Api) -> PyResult<Self> {
+        fn axis_one_scalar(api: &'static Api, axis: i32) -> PyResult<Self> {
             // ArgMax consumes one scalar int32 axis. Keep a non-null pointer
             // even for rank zero so the generated call is ABI-conservative.
             let dimensions: [i64; 0] = [];
@@ -935,7 +935,7 @@ mod rextio_tensorflow_runtime {
                 return Err(runtime_error("TF_TensorData returned null for argmax axis"));
             }
             unsafe {
-                std::ptr::write(data.cast::<i32>(), 1i32);
+                std::ptr::write(data.cast::<i32>(), axis);
             }
             Ok(tensor)
         }
@@ -1157,6 +1157,13 @@ mod rextio_tensorflow_runtime {
     }
 
     fn unary(input: &RxtTfTensor, op_name: &str) -> PyResult<RxtTfTensor> {
+        let expected_rank = input.rank()?;
+        if expected_rank != 1 && expected_rank != 2 {
+            return Err(value_error(format!(
+                "expected rank-1 or rank-2 tensor, got rank {expected_rank}"
+            )));
+        }
+        input.validate_f32(expected_rank)?;
         let status = OwnedStatus::new(input.inner.api)?;
         let context = input.context();
         let device = input.backing_device()?;
@@ -1165,7 +1172,7 @@ mod rextio_tensorflow_runtime {
         op.add_input(input.pointer(), &status)?;
         op.set_type("T", TF_FLOAT)?;
         let result = RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
-        result.validate_f32(2)?;
+        result.validate_f32(expected_rank)?;
         Ok(result)
     }
 
@@ -1228,6 +1235,28 @@ mod rextio_tensorflow_runtime {
         })
     }
 
+    pub fn sub(left: &RxtTfTensor, right: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            let expected_rank = if left.rank()? == 2 || right.rank()? == 2 {
+                2
+            } else {
+                1
+            };
+            binary(left, right, "Sub", false, expected_rank)
+        })
+    }
+
+    pub fn div(left: &RxtTfTensor, right: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            let expected_rank = if left.rank()? == 2 || right.rank()? == 2 {
+                2
+            } else {
+                1
+            };
+            binary(left, right, "RealDiv", false, expected_rank)
+        })
+    }
+
     pub fn relu(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
         Python::attach(|_py| unary(input, "Relu"))
     }
@@ -1247,10 +1276,11 @@ mod rextio_tensorflow_runtime {
 
     fn reduction_axis_handle(
         context: Rc<BorrowedContext>,
+        axis: i32,
     ) -> PyResult<Rc<OwnedTensorHandle>> {
         let api = context.api;
         let status = OwnedStatus::new(api)?;
-        let tensor = OwnedTfTensor::axis_one(api)?;
+        let tensor = OwnedTfTensor::axis_one(api, axis)?;
         let raw = unsafe { (api.tfe_new_tensor_handle)(tensor.raw, status.pointer()) };
         let pending = PendingHandle::new(api, raw);
         status.check("TFE_NewTensorHandle(reduction axis)")?;
@@ -1262,10 +1292,11 @@ mod rextio_tensorflow_runtime {
 
     fn argmax_axis_handle(
         context: Rc<BorrowedContext>,
+        axis: i32,
     ) -> PyResult<Rc<OwnedTensorHandle>> {
         let api = context.api;
         let status = OwnedStatus::new(api)?;
-        let tensor = OwnedTfTensor::axis_one_scalar(api)?;
+        let tensor = OwnedTfTensor::axis_one_scalar(api, axis)?;
         let raw = unsafe { (api.tfe_new_tensor_handle)(tensor.raw, status.pointer()) };
         let pending = PendingHandle::new(api, raw);
         status.check("TFE_NewTensorHandle(argmax axis)")?;
@@ -1275,52 +1306,106 @@ mod rextio_tensorflow_runtime {
         pending.into_owned(context)
     }
 
-    fn reduce_axis1(input: &RxtTfTensor, op_name: &str) -> PyResult<RxtTfTensor> {
+    fn reduce_axis(
+        input: &RxtTfTensor,
+        op_name: &str,
+        axis_value: i32,
+        keep_dims: bool,
+    ) -> PyResult<RxtTfTensor> {
+        if axis_value != 0 && axis_value != 1 {
+            return Err(value_error(format!(
+                "expected reduction axis 0 or 1, got {axis_value}"
+            )));
+        }
+        input.validate_f32(2)?;
         let status = OwnedStatus::new(input.inner.api)?;
         let context = input.context();
         let device = input.backing_device()?;
-        let axis = reduction_axis_handle(Rc::clone(&context))?;
+        let axis = reduction_axis_handle(Rc::clone(&context), axis_value)?;
         let op = OwnedOp::new(Rc::clone(&context), op_name, &status)?;
-            op.set_device(&device, &status)?;
-            op.add_input(input.pointer(), &status)?;
-            op.add_input(axis.raw, &status)?;
-            op.set_type("T", TF_FLOAT)?;
-            op.set_type("Tidx", TF_INT32)?;
-            op.set_bool("keep_dims", false)?;
-            let result =
-                RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
-            result.validate_f32(1)?;
+        op.set_device(&device, &status)?;
+        op.add_input(input.pointer(), &status)?;
+        op.add_input(axis.raw, &status)?;
+        op.set_type("T", TF_FLOAT)?;
+        op.set_type("Tidx", TF_INT32)?;
+        op.set_bool("keep_dims", keep_dims)?;
+        let result =
+            RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
+        result.validate_f32(if keep_dims { 2 } else { 1 })?;
         Ok(result)
+    }
+
+    /// Reduce mean along statically-proven axis [0], keep_dims=false.
+    pub fn reduce_mean_axis0(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| reduce_axis(input, "Mean", 0, false))
+    }
+
+    /// Reduce mean along statically-proven axis [0], keep_dims=true.
+    pub fn reduce_mean_axis0_keepdims(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| reduce_axis(input, "Mean", 0, true))
     }
 
     /// Reduce mean along the statically proven axis [1], keep_dims=false.
     pub fn reduce_mean_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
-        Python::attach(|_py| reduce_axis1(input, "Mean"))
+        Python::attach(|_py| reduce_axis(input, "Mean", 1, false))
+    }
+
+    /// Reduce mean along statically-proven axis [1], keep_dims=true.
+    pub fn reduce_mean_axis1_keepdims(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| reduce_axis(input, "Mean", 1, true))
+    }
+
+    /// Reduce sum along statically-proven axis [0], keep_dims=false.
+    pub fn reduce_sum_axis0(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| reduce_axis(input, "Sum", 0, false))
+    }
+
+    /// Reduce sum along statically-proven axis [0], keep_dims=true.
+    pub fn reduce_sum_axis0_keepdims(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| reduce_axis(input, "Sum", 0, true))
     }
 
     /// Reduce sum along the statically proven axis [1], keep_dims=false.
     pub fn reduce_sum_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
-        Python::attach(|_py| reduce_axis1(input, "Sum"))
+        Python::attach(|_py| reduce_axis(input, "Sum", 1, false))
     }
 
-    /// ArgMax with the statically-proven scalar axis=1 and default int64 output.
+    /// Reduce sum along statically-proven axis [1], keep_dims=true.
+    pub fn reduce_sum_axis1_keepdims(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| reduce_axis(input, "Sum", 1, true))
+    }
+
+    fn argmax(input: &RxtTfTensor, axis_value: i32) -> PyResult<RxtTfTensor> {
+        if axis_value != 0 && axis_value != 1 {
+            return Err(value_error(format!(
+                "expected argmax axis 0 or 1, got {axis_value}"
+            )));
+        }
+        input.validate_f32(2)?;
+        let status = OwnedStatus::new(input.inner.api)?;
+        let context = input.context();
+        let device = input.backing_device()?;
+        let axis = argmax_axis_handle(Rc::clone(&context), axis_value)?;
+        let op = OwnedOp::new(Rc::clone(&context), "ArgMax", &status)?;
+        op.set_device(&device, &status)?;
+        op.add_input(input.pointer(), &status)?;
+        op.add_input(axis.raw, &status)?;
+        op.set_type("T", TF_FLOAT)?;
+        op.set_type("Tidx", TF_INT32)?;
+        op.set_type("output_type", TF_INT64)?;
+        let result = RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
+        result.validate_i64(1)?;
+        Ok(result)
+    }
+
+    /// ArgMax with statically-proven scalar axis=0 and default int64 output.
+    pub fn argmax_axis0(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| argmax(input, 0))
+    }
+
+    /// ArgMax with statically-proven scalar axis=1 and default int64 output.
     pub fn argmax_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
-        Python::attach(|_py| {
-            let status = OwnedStatus::new(input.inner.api)?;
-            let context = input.context();
-            let device = input.backing_device()?;
-            let axis = argmax_axis_handle(Rc::clone(&context))?;
-            let op = OwnedOp::new(Rc::clone(&context), "ArgMax", &status)?;
-            op.set_device(&device, &status)?;
-            op.add_input(input.pointer(), &status)?;
-            op.add_input(axis.raw, &status)?;
-            op.set_type("T", TF_FLOAT)?;
-            op.set_type("Tidx", TF_INT32)?;
-            op.set_type("output_type", TF_INT64)?;
-            let result = RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
-            result.validate_i64(1)?;
-            Ok(result)
-        })
+        Python::attach(|_py| argmax(input, 1))
     }
 
     #[allow(dead_code)]
