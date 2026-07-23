@@ -171,13 +171,16 @@ same constraints and fails with `ValueError` (not `assert`).
 | MatMul | `tf.matmul` / `tf.linalg.matmul` (also `tensorflow.*`) | **2 × 2** only | **None** (no `transpose_*`) | **2** | `rextio-tensorflow/matmul-f32-cpu-2d` | `RXTP-TENSORFLOW-001` |
 | ReLU | `tf.nn.relu` | **2** | **None** | **2** | `rextio-tensorflow/relu-f32-cpu-2d` | `RXTP-TENSORFLOW-002` |
 | Sigmoid | `tf.nn.sigmoid` | **2** | **None** | **2** | `rextio-tensorflow/sigmoid-f32-cpu-2d` | `RXTP-TENSORFLOW-005` |
+| Tanh | `tf.nn.tanh` | **2** | **None** | **2** | `rextio-tensorflow/tanh-f32-cpu-2d` | `RXTP-TENSORFLOW-009` |
 | Add (call) | `tf.add` / `tf.math.add` | See add pairs below | **None** | max rank | `rextio-tensorflow/add-call-f32-cpu` | `RXTP-TENSORFLOW-003` |
 | Add (binop) | binary `+` | See add pairs below | n/a | max rank | `rextio-tensorflow/add-binop-f32-cpu` | `RXTP-TENSORFLOW-006` |
+| Multiply (binop) | binary `*` only | rank-1×rank-1, rank-2×rank-2, or rank-2×rank-1 (either order) | n/a | max rank | `rextio-tensorflow/mul-binop-f32-cpu` | `RXTP-TENSORFLOW-012` |
 | Reduce mean | `tf.reduce_mean` / `tf.math.reduce_mean` | **2** | **`axis=1` literal** only; optional `keepdims=False` or omitted | **1** | `rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d` | `RXTP-TENSORFLOW-004` |
+| Reduce sum | `tf.reduce_sum` / `tf.math.reduce_sum` | **2** | **`axis=1` literal** only; optional `keepdims=False` or omitted | **1** | `rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d` | `RXTP-TENSORFLOW-011` |
 | Softmax | `tf.nn.softmax` | **2** | **`axis=1` literal** only | **2** float32 | `rextio-tensorflow/softmax-axis1-f32-cpu-2d` | `RXTP-TENSORFLOW-007` |
 | ArgMax | `tf.argmax` | **2** float32 | **`axis=1` literal** only; default output type only | **1** int64 | `rextio-tensorflow/argmax-axis1-i64-cpu-2d` | `RXTP-TENSORFLOW-008` |
 
-### Add operand pairs (call and binop)
+### Elementwise operand pairs (add and binary multiply)
 
 | Left | Right | Result |
 | --- | --- | --- |
@@ -196,8 +199,9 @@ Declared packages/modules/symbols (`rules/coverage.py`):
 - packages: `tensorflow`
 - modules: `tensorflow`, `tensorflow.linalg`, `tensorflow.nn`, `tensorflow.math`
 - symbols: `tensorflow.matmul`, `tensorflow.linalg.matmul`, `tensorflow.nn.relu`,
-  `tensorflow.nn.sigmoid`, `tensorflow.add`, `tensorflow.math.add`,
-  `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`, `tensorflow.nn.softmax`,
+  `tensorflow.nn.sigmoid`, `tensorflow.nn.tanh`, `tensorflow.add`, `tensorflow.math.add`,
+  `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`, `tensorflow.reduce_sum`,
+  `tensorflow.math.reduce_sum`, `tensorflow.nn.softmax`,
   `tensorflow.argmax`
 
 ### Boundary annotation types
@@ -231,8 +235,11 @@ Lowering emits calls into the exact generated module
 | matmul | `rextio_tensorflow_runtime::matmul(&a, &b)?` |
 | relu | `rextio_tensorflow_runtime::relu(&x)?` |
 | sigmoid | `rextio_tensorflow_runtime::sigmoid(&x)?` |
+| tanh | `rextio_tensorflow_runtime::tanh(&x)?` |
 | add / `+` | `rextio_tensorflow_runtime::add(&a, &b)?` |
+| multiply / `*` | `rextio_tensorflow_runtime::mul(&a, &b)?` |
 | reduce_mean axis=1 | `rextio_tensorflow_runtime::reduce_mean_axis1(&x)?` |
+| reduce_sum axis=1 | `rextio_tensorflow_runtime::reduce_sum_axis1(&x)?` |
 | softmax axis=1 | `rextio_tensorflow_runtime::softmax_axis1(&x)?` |
 | argmax axis=1 (int64) | `rextio_tensorflow_runtime::argmax_axis1(&x)?` |
 | boundary extract | `extract_f32_cpu_{1,2}d` / `extract_i64_cpu_1d` |
@@ -249,17 +256,20 @@ All of the following are required for a site to be **Claimed** and lowered:
    `TensorI64Cpu1D` is limited to the classification result and exact rank-1
    function input boundary; it is not accepted as a TensorFlow operation input.
 2. **Functional style only** — covered calls with a **receiver** are
-   `NotCovered` (no method-style receivers on matmul / relu / sigmoid / add /
-   reduce_mean). Lowering also rejects claimed/rendered receivers with
+   `NotCovered` (no method-style receivers on matmul / relu / sigmoid / tanh / add /
+   reduce_mean / reduce_sum). Lowering also rejects claimed/rendered receivers with
    `ValueError`.
 3. **Positional operands only** for matmul / relu / sigmoid / add (keywords →
    `Rejected`).
 4. **Matmul** — exactly two rank-2 tensors; no transpose keywords.
 5. **Activations** — exactly one rank-2 tensor; no keywords.
-6. **Add** — exactly two tensors in a supported rank pair (table above).
-7. **reduce_mean** — exactly one rank-2 tensor **plus** static literal keyword
-   `axis=1`. Positional axis is **not** claimed on Alpha. Optional
-   `keepdims=False` only (or omit). Non-literal keywords → `Rejected`.
+6. **Add / multiply** — exactly two tensors in a supported rank pair (table
+   above). Multiplication accepts only binary `*`; `tf.multiply` aliases and
+   scalar operands remain outside the Alpha surface.
+7. **reduce_mean / reduce_sum** — exactly one rank-2 tensor **plus** static
+   literal keyword `axis=1`. Positional axis is **not** claimed on Alpha.
+   Optional `keepdims=False` only (or omit); duplicate, non-literal, and extra
+   keywords → `Rejected`.
 8. **No dynamic axis/dtype/rank proof** — only the fixed Alpha vocabulary.
 9. **Inference-oriented slice** — not training/`GradientTape`, graph/Session,
    `tf.function`/AutoGraph, or non-`CPU:0` execution.
@@ -276,7 +286,7 @@ Anything outside the tables above is either:
 | Outcome | Meaning | Typical cases |
 | --- | --- | --- |
 | **`NotCovered`** | Plugin declines; site may stay on ordinary Python fallback | Unknown symbols (`tf.cos`, …); method receivers on covered targets; untyped (`None`) operands |
-| **`Rejected`** | Recognized shape but not lowerable; diagnostic + Python fallback | Wrong ranks; keywords on matmul/relu/add; `reduce_mean` without `axis=1` literal; bad keepdims; non-plugin tensor types on covered ops (`RXTP-TENSORFLOW-010` / per-op codes) |
+| **`Rejected`** | Recognized shape but not lowerable; diagnostic + Python fallback | Wrong ranks; keywords on matmul/relu/add; reduction without `axis=1` literal; bad/duplicate keepdims; non-plugin tensor types on covered ops (`RXTP-TENSORFLOW-010` / per-op codes) |
 
 ### Explicit exclusions (not Alpha-supported)
 
@@ -290,7 +300,8 @@ Anything outside the tables above is either:
 - Rank-1 activations or matmul; rank-3+ / batched matmul
 - Dynamic reduction/classification axes; positional `axis`; `keepdims=True`; `tf.argmax(output_type=...)`
 - Matmul transpose / other keywords
-- In-place ops
+- In-place ops; `tf.multiply` / `tf.math.multiply` aliases, scalar operands,
+  and other elementwise operators
 - Host resolve (`TFE_TensorHandleResolve`) on the inference path
 - DLPack
 - `TFE_NewContext` / second eager context / Session
@@ -383,9 +394,10 @@ def inference(
 Also accepted (when types match the tables):
 
 - `tf.linalg.matmul(a, b)` (alias of matmul rule)
-- `tf.math.add(x, y)` / `tf.math.reduce_mean(x, axis=1)`
+- `tf.math.add(x, y)` / `tf.math.reduce_mean(x, axis=1)` / `tf.math.reduce_sum(x, axis=1)`
 - same-rank `+` / `tf.add` for 1D+1D or 2D+2D
 - `tf.reduce_mean(x, axis=1, keepdims=False)`
+- `tf.reduce_sum(x, axis=1, keepdims=False)`
 
 Core-lowerable scalar Python control flow around claimed ops is supported. The
 real-Cargo E2E uses `range(depth)` and an integer condition to choose relu or
@@ -401,6 +413,7 @@ sigmoid; tensor-dependent control flow remains unsupported.
 | `tf.reduce_mean(x)` without `axis=1` | `Rejected` |
 | `tf.reduce_mean(x, 1)` positional axis | `Rejected` (not statically proven on Alpha) |
 | `tf.reduce_mean(x, axis=0)` | `Rejected` |
+| `tf.reduce_sum(x, 1)` or non-literal/duplicate `axis` | `Rejected` |
 | `tf.nn.softmax(x)` / `tf.nn.softmax(x, axis=0)` | `Rejected` |
 | `tf.argmax(x, axis=1, output_type=tf.int32)` | `Rejected` |
 | `tf.cos(x)` | `NotCovered` |

@@ -102,6 +102,31 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/mul-binop-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="binop",
+            pattern=(
+                "binary * on float32 CPU rank-2 (+ optional rank-1 bias) or "
+                "same-rank tensors"
+            ),
+        ),
+        constraint=(
+            "Binop '*' over two float32 CPU plugin tensors only: rank-2 * rank-2, "
+            "rank-1 * rank-1, or rank-2 * rank-1 trailing broadcast (either order). "
+            "Concrete broadcast dimensions are checked by TFE Mul at runtime. "
+            "Functional tf.multiply aliases and scalar operands are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-012",
+        guidance=(
+            "Write x * y with TensorF32Cpu2D / TensorF32Cpu1D annotations on "
+            "the Alpha-supported broadcast shapes."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d",
         provider="rextio-tensorflow",
         scope=RuleScope(
@@ -141,6 +166,51 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         diagnostic_code="RXTP-TENSORFLOW-005",
         guidance=(
             "Call tf.nn.sigmoid(x) with a TensorF32Cpu2D positional argument."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.reduce_sum(x, axis=1) on float32 CPU rank-2 tensors "
+                "(literal axis keyword)"
+            ),
+        ),
+        constraint=(
+            "One float32 CPU rank-2 tensor plus literal keyword axis=1; "
+            "keepdims omitted or False. Positional or dynamic axes, duplicate "
+            "metadata, and extra keywords are not claimed. The owned TFE Sum "
+            "wrapper returns a float32 CPU rank-1 EagerTensor."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-011",
+        guidance=(
+            "Write tf.reduce_sum(x, axis=1) with a TensorF32Cpu2D operand and "
+            "a static axis=1 literal."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/tanh-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.tanh on float32 CPU rank-2 tensors",
+        ),
+        constraint=(
+            "One positional float32 CPU rank-2 tensor operand and no keywords. "
+            "The active TensorFlow 2.21.0 wheel executes the owned TFE Tanh op; "
+            "the result preserves the operand type."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-009",
+        guidance=(
+            "Call tf.nn.tanh(x) with a TensorF32Cpu2D positional argument."
         ),
         stability="experimental",
         verified=True,
@@ -208,8 +278,8 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="fallback",
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
-            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, "
-            "reduce_mean(axis=1), sigmoid, softmax(axis=1), and default-int64 "
+            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, multiply, "
+            "reduce_mean(axis=1), reduce_sum(axis=1), sigmoid, tanh, softmax(axis=1), and default-int64 "
             "argmax(axis=1); other dtypes, devices, ranks, and dynamic literals "
             "remain on the fallback."
         ),

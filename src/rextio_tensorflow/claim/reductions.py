@@ -1,4 +1,4 @@
-"""Fail-closed claims for ``tf.reduce_mean(..., axis=1)``."""
+"""Fail-closed claims for literal-axis TensorFlow rank-2 reductions."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from rextio.plugins.api import Claimed, ClaimResult, ClaimSite, NotCovered
 
 from rextio_tensorflow.diagnostics import (
     DIAGNOSTIC_MEAN,
+    DIAGNOSTIC_SUM,
     DIAGNOSTIC_UNSUPPORTED,
     TENSOR_F32_CPU_1D,
     TENSOR_F32_CPU_2D,
@@ -22,6 +23,15 @@ MEAN_TARGETS = frozenset(
         "tf.math.reduce_mean",
     }
 )
+SUM_RULE = "rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d"
+SUM_TARGETS = frozenset(
+    {
+        "tensorflow.reduce_sum",
+        "tensorflow.math.reduce_sum",
+        "tf.reduce_sum",
+        "tf.math.reduce_sum",
+    }
+)
 
 
 def _keyword_map(site: ClaimSite) -> dict[str, object] | None:
@@ -36,39 +46,49 @@ def _keyword_map(site: ClaimSite) -> dict[str, object] | None:
 
 
 def try_claim(site: ClaimSite) -> ClaimResult | None:
-    """Claim reduce_mean with static axis=1 on rank-2 float32 CPU."""
-    if site.kind != "call" or site.target not in MEAN_TARGETS:
+    """Claim supported reductions with static axis=1 on rank-2 float32 CPU."""
+    if site.kind != "call":
         return None
     if site.receiver is not None:
         return NotCovered()
+    if site.target in MEAN_TARGETS:
+        rule_id = MEAN_RULE
+        diagnostic = DIAGNOSTIC_MEAN
+        operation = "reduce_mean"
+    elif site.target in SUM_TARGETS:
+        rule_id = SUM_RULE
+        diagnostic = DIAGNOSTIC_SUM
+        operation = "reduce_sum"
+    else:
+        return None
 
     operands = tuple(site.operand_types)
     keywords = _keyword_map(site)
     if keywords is None:
         return reject(
             site,
-            DIAGNOSTIC_MEAN,
-            "only static literal keywords are supported for reduce_mean",
+            diagnostic,
+            f"only static literal keywords are supported for {operation}",
             "Pass axis=1 as a static literal keyword.",
         )
 
-    # Forms: reduce_mean(x, axis=1) or reduce_mean(x, 1) optionally keepdims=False.
+    # Static proof is limited to ``operation(x, axis=1[, keepdims=False])``.
     axis_value: object | None = None
     if len(operands) == 1:
         if "axis" not in keywords:
             return reject(
                 site,
-                DIAGNOSTIC_MEAN,
-                "reduce_mean requires axis=1",
-                "Write tf.reduce_mean(x, axis=1).",
+                diagnostic,
+                f"{operation} requires axis=1",
+                f"Write tf.{operation}(x, axis=1).",
             )
         axis_value = keywords["axis"]
         extra = set(keywords) - {"axis", "keepdims"}
         if extra:
             return reject(
                 site,
-                DIAGNOSTIC_MEAN,
-                f"unsupported reduce_mean keywords {sorted(extra)!r}",
+                diagnostic,
+                f"unsupported {operation} keywords {sorted(extra)!r}",
                 "Only axis and optional keepdims=False are supported.",
             )
     elif len(operands) == 2:
@@ -76,7 +96,7 @@ def try_claim(site: ClaimSite) -> ClaimResult | None:
         if "axis" in keywords:
             return reject(
                 site,
-                DIAGNOSTIC_MEAN,
+                diagnostic,
                 "axis must not be both positional and keyword",
                 "Use either axis=1 keyword or a single positional axis.",
             )
@@ -84,30 +104,30 @@ def try_claim(site: ClaimSite) -> ClaimResult | None:
         # callable schema, require keyword form for static proof.
         return reject(
             site,
-            DIAGNOSTIC_MEAN,
+            diagnostic,
             "positional axis is not statically proven on the Alpha surface",
-            "Write tf.reduce_mean(x, axis=1) with a literal keyword.",
+            f"Write tf.{operation}(x, axis=1) with a literal keyword.",
         )
     else:
         return reject(
             site,
-            DIAGNOSTIC_MEAN,
-            "unexpected reduce_mean arity",
-            "Write tf.reduce_mean(x, axis=1).",
+            diagnostic,
+            f"unexpected {operation} arity",
+            f"Write tf.{operation}(x, axis=1).",
         )
 
     if not isinstance(axis_value, int) or isinstance(axis_value, bool) or axis_value != 1:
         return reject(
             site,
-            DIAGNOSTIC_MEAN,
-            f"Alpha reduce_mean requires axis=1 literal; got axis={axis_value!r}",
+            diagnostic,
+            f"Alpha {operation} requires axis=1 literal; got axis={axis_value!r}",
             "Use the literal keyword axis=1.",
         )
     if "keepdims" in keywords and keywords["keepdims"] is not False:
         return reject(
             site,
-            DIAGNOSTIC_MEAN,
-            f"Alpha reduce_mean requires keepdims=False or omitted; got {keywords['keepdims']!r}",
+            diagnostic,
+            f"Alpha {operation} requires keepdims=False or omitted; got {keywords['keepdims']!r}",
             "Omit keepdims or pass keepdims=False.",
         )
 
@@ -125,10 +145,10 @@ def try_claim(site: ClaimSite) -> ClaimResult | None:
         return reject(
             site,
             DIAGNOSTIC_UNSUPPORTED,
-            f"Alpha reduce_mean requires float32 CPU rank-2; got {operand!r}",
-            "Use TensorF32Cpu2D for the reduce_mean operand.",
+            f"Alpha {operation} requires float32 CPU rank-2; got {operand!r}",
+            f"Use TensorF32Cpu2D for the {operation} operand.",
         )
-    return Claimed(rule_id=MEAN_RULE, result_type=TENSOR_F32_CPU_1D)
+    return Claimed(rule_id=rule_id, result_type=TENSOR_F32_CPU_1D)
 
 
-__all__ = ["MEAN_RULE", "MEAN_TARGETS", "try_claim"]
+__all__ = ["MEAN_RULE", "MEAN_TARGETS", "SUM_RULE", "SUM_TARGETS", "try_claim"]
