@@ -172,6 +172,7 @@ same constraints and fails with `ValueError` (not `assert`).
 | ReLU | `tf.nn.relu` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/relu-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-018` / `002` |
 | Sigmoid | `tf.nn.sigmoid` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/sigmoid-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-019` / `005` |
 | Tanh | `tf.nn.tanh` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/tanh-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-020` / `009` |
+| Math unary | `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`, `tf.math.log`, `tf.math.sqrt` | **1 or 2** | exactly one positional operand; no keywords | preserves rank | `rextio-tensorflow/{abs,negative,square,exp,log,sqrt}-f32-cpu` | `RXTP-TENSORFLOW-026`–`031` |
 | Add (call) | `tf.add` / `tf.math.add` | See add pairs below | **None** | max rank | `rextio-tensorflow/add-call-f32-cpu` | `RXTP-TENSORFLOW-003` |
 | Add (binop) | binary `+` | See add pairs below | n/a | max rank | `rextio-tensorflow/add-binop-f32-cpu` | `RXTP-TENSORFLOW-006` |
 | Multiply | `tf.multiply` / `tf.math.multiply` or binary `*` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/mul-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-013` / `012` |
@@ -202,9 +203,12 @@ Declared packages/modules/symbols (`rules/coverage.py`):
 - packages: `tensorflow`
 - modules: `tensorflow`, `tensorflow.linalg`, `tensorflow.nn`, `tensorflow.math`
 - symbols: `tensorflow.matmul`, `tensorflow.linalg.matmul`, `tensorflow.nn.relu`,
-  `tensorflow.nn.sigmoid`, `tensorflow.nn.tanh`, `tensorflow.add`, `tensorflow.math.add`,
-  `tensorflow.multiply`, `tensorflow.math.multiply`, `tensorflow.subtract`,
-  `tensorflow.math.subtract`, `tensorflow.divide`, `tensorflow.math.divide`,
+  `tensorflow.nn.sigmoid`, `tensorflow.nn.tanh`, `tensorflow.abs`,
+  `tensorflow.negative`, `tensorflow.square`, `tensorflow.exp`,
+  `tensorflow.math.log`, `tensorflow.math.sqrt`, `tensorflow.add`,
+  `tensorflow.math.add`, `tensorflow.multiply`, `tensorflow.math.multiply`,
+  `tensorflow.subtract`, `tensorflow.math.subtract`, `tensorflow.divide`,
+  `tensorflow.math.divide`,
   `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`, `tensorflow.reduce_sum`,
   `tensorflow.math.reduce_sum`, `tensorflow.nn.softmax`,
   `tensorflow.argmax`, `tensorflow.nn.bias_add`
@@ -241,6 +245,7 @@ Lowering emits calls into the exact generated module
 | relu | `rextio_tensorflow_runtime::relu(&x)?` |
 | sigmoid | `rextio_tensorflow_runtime::sigmoid(&x)?` |
 | tanh | `rextio_tensorflow_runtime::tanh(&x)?` |
+| abs / negative / square / exp / log / sqrt | `rextio_tensorflow_runtime::{abs,negative,square,exp,log,sqrt}(&x)?` |
 | add / `+` | `rextio_tensorflow_runtime::add(&a, &b)?` |
 | multiply / `*` | `rextio_tensorflow_runtime::mul(&a, &b)?` |
 | subtract / `-` | `rextio_tensorflow_runtime::sub(&a, &b)?` |
@@ -263,13 +268,15 @@ All of the following are required for a site to be **Claimed** and lowered:
    `TensorI64Cpu1D` is limited to the classification result and exact rank-1
    function input boundary; it is not accepted as a TensorFlow operation input.
 2. **Functional style only** — covered calls with a **receiver** are
-   `NotCovered` (no method-style receivers on matmul / relu / sigmoid / tanh / add /
-   reduce_mean / reduce_sum). Lowering also rejects claimed/rendered receivers with
-   `ValueError`.
-3. **Positional operands only** for matmul / relu / sigmoid / add (keywords →
-   `Rejected`).
+   `NotCovered` (no method-style receivers on matmul / unary operations / add /
+   reduce_mean / reduce_sum). Lowering also rejects claimed/rendered receivers
+   with `ValueError`.
+3. **Positional operands only** for matmul / activations / math unary / add
+   (keywords → `Rejected`).
 4. **Matmul** — exactly two rank-2 tensors; no transpose keywords.
-5. **Activations** — exactly one rank-1 or rank-2 tensor; no keywords.
+5. **Unary operations** — activations and the exact listed math-unary targets
+   accept exactly one rank-1 or rank-2 tensor and no keywords. Alternate
+   TensorFlow spellings such as `tf.math.abs` are not inferred aliases.
 6. **Elementwise binary ops** — exactly two tensors in a supported rank pair
    (table above). Calls accept only the explicitly listed canonical targets
    and two positional operands; scalars and inferred aliases are excluded.
@@ -417,6 +424,8 @@ Also accepted (when types match the tables):
 - Explicit `tf.math.{add,multiply,subtract,divide}` aliases and `+ * - /`
   across the bounded rank matrix
 - rank-1 `tf.nn.relu` / `sigmoid` / `tanh`
+- rank-1/rank-2 `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`,
+  `tf.math.log`, and `tf.math.sqrt`
 - rank-1 `tf.nn.softmax(x)` and `tf.nn.softmax(x, axis=0)`
 - `tf.reduce_mean(x, 0, keepdims=True)` and
   `tf.reduce_sum(x, axis=1, keepdims=False)`
@@ -546,9 +555,10 @@ experimental pending a separate support-promotion decision. The original
 vertical slice remains rank-2 matmul → rank-2 activations → scalar Rust
 control flow → broadcast add → classification. The 0.1.2 follow-up adds a
 real-Cargo slice spanning rank-1 relu/sigmoid/tanh → functional multiply →
-rank-1 Softmax default/axis 0 → subtraction → reverse-broadcast RealDiv →
-axis-0/axis-1 keepdims reductions → ArgMax axis 0, with CPU, special-value,
-error, no-host-resolve, and lifetime checks. The Linux
+rank-1 Softmax default/axis 0 → Abs/Neg/Square/Exp/Log/Sqrt → subtraction →
+reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions → ArgMax axis 0,
+with CPU, NaN/Inf/domain/signed-zero, error, no-host-resolve, and lifetime
+checks. The Linux
 probe is opt-in and does not claim certification when it has not been run.
 
 ---

@@ -1269,6 +1269,30 @@ mod rextio_tensorflow_runtime {
         Python::attach(|_py| unary(input, "Tanh"))
     }
 
+    pub fn abs(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| unary(input, "Abs"))
+    }
+
+    pub fn negative(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| unary(input, "Neg"))
+    }
+
+    pub fn square(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| unary(input, "Square"))
+    }
+
+    pub fn exp(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| unary(input, "Exp"))
+    }
+
+    pub fn log(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| unary(input, "Log"))
+    }
+
+    pub fn sqrt(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| unary(input, "Sqrt"))
+    }
+
     /// Softmax on the statically-proven final rank-1 axis (axis=0).
     pub fn softmax_axis0(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
         Python::attach(|_py| unary(input, "Softmax"))

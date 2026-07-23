@@ -45,6 +45,14 @@ from rextio_tensorflow.claim.reductions import (
     SUM_GENERAL_RULE,
     SUM_RULE,
 )
+from rextio_tensorflow.claim.unary import (
+    ABS_RULE,
+    EXP_RULE,
+    LOG_RULE,
+    NEGATIVE_RULE,
+    SQRT_RULE,
+    SQUARE_RULE,
+)
 from rextio_tensorflow.diagnostics import (
     TENSOR_F32_CPU_1D,
     TENSOR_F32_CPU_2D,
@@ -105,6 +113,102 @@ def test_claims_linalg_matmul_alias() -> None:
 def test_claims_rank1_and_rank2_activations(target: str, operand: str, rule: str) -> None:
     result = PLUGIN.claim(_call(target, (operand,)), CONFIG)
     assert result == Claimed(rule_id=rule, result_type=operand)
+
+
+@pytest.mark.parametrize(
+    ("target", "rule"),
+    (
+        ("tensorflow.abs", ABS_RULE),
+        ("tf.abs", ABS_RULE),
+        ("tensorflow.negative", NEGATIVE_RULE),
+        ("tf.negative", NEGATIVE_RULE),
+        ("tensorflow.square", SQUARE_RULE),
+        ("tf.square", SQUARE_RULE),
+        ("tensorflow.exp", EXP_RULE),
+        ("tf.exp", EXP_RULE),
+        ("tensorflow.math.log", LOG_RULE),
+        ("tf.math.log", LOG_RULE),
+        ("tensorflow.math.sqrt", SQRT_RULE),
+        ("tf.math.sqrt", SQRT_RULE),
+    ),
+)
+@pytest.mark.parametrize("operand", (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D))
+def test_claims_exact_math_unary_surface(
+    target: str,
+    rule: str,
+    operand: str,
+) -> None:
+    result = PLUGIN.claim(_call(target, (operand,)), CONFIG)
+    assert result == Claimed(rule_id=rule, result_type=operand)
+
+
+@pytest.mark.parametrize(
+    ("target", "operand_types", "operand_literals", "keywords"),
+    (
+        (
+            "tensorflow.abs",
+            (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D),
+            (),
+            (),
+        ),
+        (
+            "tensorflow.negative",
+            (TENSOR_I64_CPU_1D,),
+            (),
+            (),
+        ),
+        (
+            "tensorflow.square",
+            (TENSOR_F32_CPU_1D,),
+            (ClaimLiteral(is_literal=True, value=1),),
+            (),
+        ),
+        (
+            "tensorflow.exp",
+            (TENSOR_F32_CPU_2D,),
+            (),
+            (
+                KeywordArg(
+                    name="name",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="exp"),
+                ),
+            ),
+        ),
+    ),
+)
+def test_math_unary_near_misses_fail_closed(
+    target: str,
+    operand_types: tuple[str | None, ...],
+    operand_literals: tuple[ClaimLiteral, ...],
+    keywords: tuple[KeywordArg, ...],
+) -> None:
+    result = PLUGIN.claim(
+        _call(
+            target,
+            operand_types,
+            operand_literals=operand_literals,
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert isinstance(result, Rejected)
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        "tensorflow.math.abs",
+        "tensorflow.math.negative",
+        "tensorflow.math.square",
+        "tensorflow.math.exp",
+        "tensorflow.log",
+        "tensorflow.sqrt",
+    ),
+)
+def test_math_unary_unlisted_aliases_are_not_covered(target: str) -> None:
+    result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_1D,)), CONFIG)
+    assert isinstance(result, NotCovered)
 
 
 def test_claims_add_rank2_bias() -> None:

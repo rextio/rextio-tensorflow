@@ -45,6 +45,14 @@ from rextio_tensorflow.claim.reductions import (
     SUM_GENERAL_RULE,
     SUM_RULE,
 )
+from rextio_tensorflow.claim.unary import (
+    ABS_RULE,
+    EXP_RULE,
+    LOG_RULE,
+    NEGATIVE_RULE,
+    SQRT_RULE,
+    SQUARE_RULE,
+)
 from rextio_tensorflow.diagnostics import (
     TENSOR_F32_CPU_1D,
     TENSOR_F32_CPU_2D,
@@ -184,6 +192,97 @@ def test_lower_unary_activations() -> None:
         )
         lowered = PLUGIN.lower(claimed, ctx)
         assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&tmp)?"
+
+
+@pytest.mark.parametrize(
+    ("target", "rule", "helper", "tfe_operation"),
+    (
+        ("tensorflow.abs", ABS_RULE, "abs", "Abs"),
+        ("tensorflow.negative", NEGATIVE_RULE, "negative", "Neg"),
+        ("tensorflow.square", SQUARE_RULE, "square", "Square"),
+        ("tensorflow.exp", EXP_RULE, "exp", "Exp"),
+        ("tensorflow.math.log", LOG_RULE, "log", "Log"),
+        ("tensorflow.math.sqrt", SQRT_RULE, "sqrt", "Sqrt"),
+    ),
+)
+@pytest.mark.parametrize("operand_type", (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D))
+def test_lower_math_unary_surface(
+    target: str,
+    rule: str,
+    helper: str,
+    tfe_operation: str,
+    operand_type: str,
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target=target,
+        operand_types=(operand_type,),
+        operand_literals=(ClaimLiteral(is_literal=False),),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=rule,
+        result_type=operand_type,
+    )
+    lowered = PLUGIN.lower(
+        claimed,
+        LoweringContext(
+            operands=("value",),
+            target_language="rust",
+            fresh_name=_fresh_name,
+        ),
+    )
+    assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&value)?"
+    assert f'unary(input, "{tfe_operation}")' in runtime_module_helpers()
+
+
+@pytest.mark.parametrize(
+    ("mutations", "message"),
+    (
+        ({"rule_id": NEGATIVE_RULE}, "malformed abs"),
+        ({"result_type": TENSOR_F32_CPU_2D}, "malformed abs"),
+        ({"operand_types": (TENSOR_I64_CPU_1D,)}, "malformed abs"),
+        (
+            {
+                "keywords": (
+                    KeywordArg(
+                        name="name",
+                        arg_type="str",
+                        literal=ClaimLiteral(is_literal=True, value="abs"),
+                    ),
+                )
+            },
+            "malformed abs",
+        ),
+        (
+            {"operand_literals": (ClaimLiteral(is_literal=True, value=1),)},
+            "malformed abs",
+        ),
+    ),
+)
+def test_math_unary_lower_rejects_forged_metadata(
+    mutations: dict[str, object],
+    message: str,
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.abs",
+        operand_types=(TENSOR_F32_CPU_1D,),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=ABS_RULE,
+        result_type=TENSOR_F32_CPU_1D,
+    )
+    with pytest.raises(ValueError, match=message):
+        PLUGIN.lower(
+            replace(claimed, **mutations),
+            LoweringContext(
+                operands=("value",),
+                target_language="rust",
+                fresh_name=_fresh_name,
+            ),
+        )
 
 
 def test_lower_add_binop() -> None:

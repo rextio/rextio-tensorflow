@@ -107,6 +107,36 @@ def softmax_rank1_axis0_positional(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
     return tf.nn.softmax(x, 0)
 
 
+def unary_abs_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.abs(x)
+
+
+def unary_negative_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.negative(x)
+
+
+def unary_square_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.square(x)
+
+
+def unary_exp_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.exp(x)
+
+
+def unary_log_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.math.log(x)
+
+
+def unary_sqrt_1d(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.math.sqrt(x)
+
+
+def unary_chain_2d(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.math.sqrt(
+        tf.math.log(tf.exp(tf.square(tf.negative(tf.abs(x)))))
+    )
+
+
 def subtract_2d_1d(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2D:
     return tf.subtract(left, right)
 
@@ -245,6 +275,30 @@ def _tensor_equal(left: object, right: object) -> bool:
     if left.dtype == tf.int64:
         return bool(tf.reduce_all(tf.equal(left, right)).numpy())
     return bool(tf.reduce_all(tf.abs(left - right) <= 1e-5).numpy())
+
+
+def _float_special_values_equal(left: object, right: object) -> bool:
+    tf = _import_tf()
+    if not isinstance(left, tf.Tensor) or not isinstance(right, tf.Tensor):
+        return False
+    if left.dtype != tf.float32 or right.dtype != tf.float32:
+        return False
+    if left.shape != right.shape:
+        return False
+    left_values = left.numpy().ravel().tolist()
+    right_values = right.numpy().ravel().tolist()
+    for left_value, right_value in zip(left_values, right_values, strict=True):
+        if math.isnan(right_value):
+            if not math.isnan(left_value):
+                return False
+            continue
+        if left_value != right_value:
+            return False
+        if right_value == 0.0 and math.copysign(1.0, left_value) != math.copysign(
+            1.0, right_value
+        ):
+            return False
+    return True
 
 
 def _args_unmutated(left: object, right: object) -> bool:
@@ -698,6 +752,32 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
         "tf_app.kernels.softmax_rank1_axis0_positional": {
             "rextio-tensorflow/softmax-axis0-f32-cpu-1d"
         },
+        "tf_app.kernels.unary_abs_1d": {
+            "rextio-tensorflow/abs-f32-cpu"
+        },
+        "tf_app.kernels.unary_negative_1d": {
+            "rextio-tensorflow/negative-f32-cpu"
+        },
+        "tf_app.kernels.unary_square_1d": {
+            "rextio-tensorflow/square-f32-cpu"
+        },
+        "tf_app.kernels.unary_exp_1d": {
+            "rextio-tensorflow/exp-f32-cpu"
+        },
+        "tf_app.kernels.unary_log_1d": {
+            "rextio-tensorflow/log-f32-cpu"
+        },
+        "tf_app.kernels.unary_sqrt_1d": {
+            "rextio-tensorflow/sqrt-f32-cpu"
+        },
+        "tf_app.kernels.unary_chain_2d": {
+            "rextio-tensorflow/abs-f32-cpu",
+            "rextio-tensorflow/negative-f32-cpu",
+            "rextio-tensorflow/square-f32-cpu",
+            "rextio-tensorflow/exp-f32-cpu",
+            "rextio-tensorflow/log-f32-cpu",
+            "rextio-tensorflow/sqrt-f32-cpu",
+        },
         "tf_app.kernels.subtract_2d_1d": {"rextio-tensorflow/sub-call-f32-cpu"},
         "tf_app.kernels.subtract_1d_2d": {"rextio-tensorflow/sub-binop-f32-cpu"},
         "tf_app.kernels.divide_2d_1d": {"rextio-tensorflow/div-call-f32-cpu"},
@@ -740,6 +820,8 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
     assert 'reduce_axis(input, "Sum", 1, true)' in rust
     assert "argmax(input, 0)" in rust
     assert "rextio_tensorflow_runtime::softmax_axis0" in rust
+    for operation in ("Abs", "Neg", "Square", "Exp", "Log", "Sqrt"):
+        assert f'unary(input, "{operation}")' in rust
     assert "input.validate_f32(expected_rank)?" in rust
     assert "TFE_TensorHandleBackingDeviceName" in rust
     assert "TFE_OpSetDevice" in rust
@@ -772,6 +854,15 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             "tf_app.kernels.softmax_rank1_axis0_positional",
             (vector,),
             lambda args: tf.nn.softmax(args[0], 0),
+        ),
+        (
+            "tf_app.kernels.unary_chain_2d",
+            (matrix,),
+            lambda args: tf.math.sqrt(
+                tf.math.log(
+                    tf.exp(tf.square(tf.negative(tf.abs(args[0]))))
+                )
+            ),
         ),
         (
             "tf_app.kernels.subtract_2d_1d",
@@ -833,6 +924,39 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
         == tf.int64
     )
 
+    unary_special = tf.constant(
+        [
+            float("-inf"),
+            -1.0,
+            -0.0,
+            0.0,
+            1.0,
+            float("inf"),
+            float("nan"),
+        ],
+        dtype=tf.float32,
+    )
+    unary_snapshot = tf.identity(unary_special)
+    eager_unary_operations = {
+        "unary_abs_1d": tf.abs,
+        "unary_negative_1d": tf.negative,
+        "unary_square_1d": tf.square,
+        "unary_exp_1d": tf.exp,
+        "unary_log_1d": tf.math.log,
+        "unary_sqrt_1d": tf.math.sqrt,
+    }
+    with _native_mode(project, "native"):
+        from tf_app import kernels
+
+        native_unary_results = {
+            name: getattr(kernels, name)(unary_special)
+            for name in eager_unary_operations
+        }
+    for name, eager_operation in eager_unary_operations.items():
+        eager_result = eager_operation(unary_snapshot)
+        assert _float_special_values_equal(native_unary_results[name], eager_result)
+    assert _float_special_values_equal(unary_special, unary_snapshot)
+
     special_left = tf.constant([0.0, -0.0, float("nan"), 1.0, float("inf")], dtype=tf.float32)
     special_right = tf.constant([float("-0.0"), 2.0, 1.0, 0.0, float("inf")], dtype=tf.float32)
     with _native_mode(project, "native"):
@@ -865,6 +989,7 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             divide_2d_1d,
             rank1_activations,
             softmax_rank1_default,
+            unary_abs_1d,
         )
 
         with pytest.raises(Exception):
@@ -880,6 +1005,10 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             softmax_rank1_default(tf.cast(vector, tf.float64))
         with pytest.raises(Exception, match="rank-1"):
             softmax_rank1_default(matrix)
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            unary_abs_1d(tf.cast(vector, tf.float64))
+        with pytest.raises(Exception, match="rank-1"):
+            unary_abs_1d(matrix)
 
         matrix_live = tf.identity(matrix_other)
         gate_live = tf.identity(vector)

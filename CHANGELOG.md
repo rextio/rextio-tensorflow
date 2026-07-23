@@ -12,6 +12,11 @@ Changelog and Semantic Versioning conventions.
   owned same-wheel TFE `Softmax` unary path, preserves the existing explicit
   rank-2 `axis=1` contract, and rejects cross-rank axes, extra options,
   dynamic literals, and forged metadata.
+- Add exact rank-1/rank-2 float32 CPU `tf.abs`, `tf.negative`, `tf.square`,
+  `tf.exp`, `tf.math.log`, and `tf.math.sqrt` calls. Generated Rust dispatches
+  owned same-wheel TFE `Abs`, `Neg`, `Square`, `Exp`, `Log`, and `Sqrt`
+  operations with rank/dtype/device revalidation and special-value parity
+  coverage.
 - Expand the bounded CPU surface with rank-1 `tf.nn.relu` / `sigmoid` / `tanh`;
   exact `tf.multiply` / `tf.math.multiply`, `tf.subtract` /
   `tf.math.subtract`, and `tf.divide` / `tf.math.divide` call targets; and

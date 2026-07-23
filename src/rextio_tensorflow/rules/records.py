@@ -415,6 +415,114 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/abs-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.abs on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Abs result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-026",
+        guidance="Call tf.abs(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/negative-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.negative on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Neg result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-027",
+        guidance="Call tf.negative(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/square-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.square on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Square result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-028",
+        guidance="Call tf.square(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/exp-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.exp on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Exp result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-029",
+        guidance="Call tf.exp(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/log-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.math.log on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Log result preserves rank, "
+            "dtype, and CPU:0 residency, including TensorFlow domain behavior."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-030",
+        guidance="Call tf.math.log(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/sqrt-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.math.sqrt on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Sqrt result preserves rank, "
+            "dtype, CPU:0 residency, domain behavior, and signed zero."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-031",
+        guidance="Call tf.math.sqrt(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/softmax-axis0-f32-cpu-1d",
         provider="rextio-tensorflow",
         scope=RuleScope(
@@ -538,11 +646,11 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="fallback",
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
-            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, multiply, "
-            "reduce_mean(axis=1), reduce_sum(axis=1), sigmoid, tanh, rank-1 "
-            "softmax(axis=0/default), rank-2 softmax(axis=1), and default-int64 "
-            "argmax(axis=1); other dtypes, devices, ranks, and dynamic literals "
-            "remain on the fallback."
+            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, activations, "
+            "exact math unary operations, add/multiply/subtract/divide, reductions, "
+            "rank-1 softmax(axis=0/default), rank-2 softmax(axis=1), and "
+            "default-int64 argmax; other dtypes, devices, ranks, aliases, and "
+            "dynamic literals remain on the fallback."
         ),
         stability="experimental",
         verified=False,

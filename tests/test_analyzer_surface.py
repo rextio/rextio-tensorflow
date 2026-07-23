@@ -29,6 +29,14 @@ from rextio_tensorflow.claim.reductions import (
     MEAN_GENERAL_RULE,
     SUM_RULE,
 )
+from rextio_tensorflow.claim.unary import (
+    ABS_RULE,
+    EXP_RULE,
+    LOG_RULE,
+    NEGATIVE_RULE,
+    SQRT_RULE,
+    SQUARE_RULE,
+)
 from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_1D
 from rextio_tensorflow.plugin import PLUGIN_ID, plugin
 
@@ -39,8 +47,12 @@ import tensorflow.math as tf_math
 from tensorflow import divide as top_divide
 from tensorflow import multiply as top_multiply
 from tensorflow import subtract as top_subtract
+from tensorflow import abs as top_abs
+from tensorflow import square as top_square
 from tensorflow.math import divide as math_divide
+from tensorflow.math import log as math_log
 from tensorflow.math import multiply as math_multiply
+from tensorflow.math import sqrt as math_sqrt
 from tensorflow.math import subtract as math_subtract
 
 
@@ -66,6 +78,34 @@ def divide_top(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2D:
 
 def divide_math(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
     return math_divide(left, right)
+
+
+def abs_top(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return top_abs(x)
+
+
+def negative_exact(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.negative(x)
+
+
+def square_top(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return top_square(x)
+
+
+def exp_exact(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.exp(x)
+
+
+def log_math(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return math_log(x)
+
+
+def sqrt_math(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return math_sqrt(x)
+
+
+def pseudo_math_abs(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.math.abs(x)
 
 
 def mean_axis0_keepdims(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
@@ -215,6 +255,34 @@ def test_analyzer_resolves_only_explicit_binary_import_aliases(tmp_path: Path) -
     for name in ("pseudo_truediv", "pseudo_raw_sub"):
         function = _function(analysis, name)
         assert not function.plugin_claims
+
+
+def test_analyzer_resolves_only_exact_math_unary_aliases(tmp_path: Path) -> None:
+    registry = _registry()
+    analysis = analyze_project(
+        _write_project(tmp_path),
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=RextioConfig(),
+    )
+    expected = {
+        "abs_top": ("tensorflow.abs", ABS_RULE),
+        "negative_exact": ("tensorflow.negative", NEGATIVE_RULE),
+        "square_top": ("tensorflow.square", SQUARE_RULE),
+        "exp_exact": ("tensorflow.exp", EXP_RULE),
+        "log_math": ("tensorflow.math.log", LOG_RULE),
+        "sqrt_math": ("tensorflow.math.sqrt", SQRT_RULE),
+    }
+    for name, (target, rule) in expected.items():
+        function = _function(analysis, name)
+        assert function.accepted is True
+        assert function.route == f"native-plugin:{PLUGIN_ID}"
+        assert len(function.plugin_claims) == 1
+        claim = function.plugin_claims[0]
+        assert claim.target == target
+        assert claim.rule_id == rule
+
+    assert not _function(analysis, "pseudo_math_abs").plugin_claims
 
 
 def test_analyzer_preserves_positional_axis_literal_alignment(tmp_path: Path) -> None:
