@@ -256,6 +256,42 @@ def test_classification_lower_revalidates_default_int64_contract() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("target", "rule", "result_type"),
+    (
+        ("tensorflow.nn.softmax", SOFTMAX_RULE, TENSOR_F32_CPU_2D),
+        ("tensorflow.argmax", ARGMAX_RULE, TENSOR_I64_CPU_1D),
+        ("tensorflow.reduce_mean", MEAN_RULE, TENSOR_F32_CPU_1D),
+    ),
+)
+def test_lower_rejects_forged_duplicate_literal_axis_metadata(
+    target: str, rule: str, result_type: str
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target=target,
+        operand_types=(TENSOR_F32_CPU_2D,),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=rule,
+        result_type=result_type,
+        keywords=(
+            KeywordArg(
+                name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)
+            ),
+            KeywordArg(
+                name="axis", arg_type="int", literal=ClaimLiteral(is_literal=True, value=1)
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="axis"):
+        PLUGIN.lower(
+            claimed,
+            LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),
+        )
+
+
 def test_functional_lower_rejects_claimed_or_rendered_receiver() -> None:
     claimed = ClaimSite(
         kind="call",
