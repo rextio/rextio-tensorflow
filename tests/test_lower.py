@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from rextio.plugins.api import (
@@ -53,6 +55,43 @@ def test_lower_matmul_targets_runtime_module() -> None:
     assert ".unwrap()" not in runtime_module_helpers()
     assert "panic!" not in runtime_module_helpers()
     assert "c_string(" in runtime_module_helpers()
+
+
+def test_lower_rejects_standalone_rust_backend() -> None:
+    """The Alpha runtime requires the CPython/PyO3 boundary and active TF wheel."""
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.matmul",
+        operand_types=(TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=MATMUL_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+    )
+    ctx = SimpleNamespace(backend="standalone-rust")
+
+    with pytest.raises(ValueError, match="standalone-rust"):
+        PLUGIN.lower(claimed, cast(LoweringContext, ctx))
+
+
+def test_lower_defaults_missing_legacy_backend_to_pyo3() -> None:
+    """API 1.3 LoweringContext instances do not expose the API 1.4 field."""
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.matmul",
+        operand_types=(TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=MATMUL_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+    )
+    legacy_ctx = SimpleNamespace(operands=("x", "w"), receiver=None)
+
+    lowered = PLUGIN.lower(claimed, cast(LoweringContext, legacy_ctx))
+
+    assert lowered.rust == "rextio_tensorflow_runtime::matmul(&x, &w)?"
 
 
 def test_runtime_helper_has_same_wheel_and_ownership_hardening() -> None:

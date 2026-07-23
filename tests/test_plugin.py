@@ -43,7 +43,7 @@ def test_entry_point_factory_returns_plugin() -> None:
     assert isinstance(obj, RextioTensorflowPlugin)
     assert obj.plugin_id == PLUGIN_ID
     assert obj.api_version == REQUIRED_PLUGIN_API == "1.3"
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.1.1"
 
 
 def test_core_loader_accepts_the_plugin() -> None:
@@ -59,6 +59,16 @@ def test_core_loader_accepts_the_plugin() -> None:
     assert [record.id for record in registry.rule_records] == [
         record.id for record in tensorflow_rule_records()
     ]
+
+
+def test_core_loader_accepts_api_13_provider_without_artifact_capability() -> None:
+    """Core owns API compatibility; this API 1.3 provider remains host-only."""
+    registry = load_registry()
+    active = registry.active[0]
+
+    assert active.api_version == "1.3"
+    assert getattr(active, "artifact_capability_declared", False) is False
+    assert not hasattr(plugin(), "artifact_capability")
 
 
 def test_covers_alpha_surface() -> None:

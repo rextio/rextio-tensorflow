@@ -32,17 +32,6 @@ REQUIRED_PLUGIN_API = "1.3"
 __all__ = ["PLUGIN_ID", "REQUIRED_PLUGIN_API", "RextioTensorflowPlugin", "plugin"]
 
 
-def _require_api_13() -> None:
-    from rextio.plugins.api import PLUGIN_API_VERSION
-
-    if PLUGIN_API_VERSION != REQUIRED_PLUGIN_API:
-        raise RuntimeError(
-            "rextio-tensorflow requires Rextio plugin API 1.3 "
-            f"(rextio>=0.1.3,<0.2); this environment advertises "
-            f"PLUGIN_API_VERSION={PLUGIN_API_VERSION!r}"
-        )
-
-
 class RextioTensorflowPlugin:
     """Plugin API 1.3 provider for the Alpha float32 CPU TensorFlow slice."""
 
@@ -51,7 +40,6 @@ class RextioTensorflowPlugin:
 
     def to_rextio_plugin(self) -> RextioPlugin:
         """Return the v1 metadata Rextio core registers this plugin under."""
-        _require_api_13()
         from rextio.plugins.models import RextioPlugin
 
         from rextio_tensorflow.rules import COVERAGE
@@ -66,14 +54,12 @@ class RextioTensorflowPlugin:
 
     def covers(self) -> CoverageDecl:
         """Return the packages, modules, and symbols this plugin covers."""
-        _require_api_13()
         from rextio_tensorflow.rules import COVERAGE
 
         return COVERAGE
 
     def describe(self, config: RextioConfig) -> tuple[RuleRecord, ...]:
         """Return the rule records for the resolved project configuration."""
-        _require_api_13()
         from rextio_tensorflow.rules import tensorflow_rule_records
 
         del config
@@ -81,28 +67,30 @@ class RextioTensorflowPlugin:
 
     def type_vocabulary(self) -> tuple[PluginType, ...]:
         """Return the annotation vocabulary this plugin adds to the analyzer."""
-        _require_api_13()
         from rextio_tensorflow.plugin_types import plugin_types
 
         return plugin_types()
 
     def claim(self, site: ClaimSite, config: RextioConfig) -> ClaimResult:
         """Decide, at analysis time, whether this plugin lowers the site."""
-        _require_api_13()
         from rextio_tensorflow.claim import claim as claim_site
 
         return claim_site(site, config)
 
     def lower(self, claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr:
         """Emit the Rust expression for a previously claimed site."""
-        _require_api_13()
+        backend = getattr(ctx, "backend", "pyo3")
+        if backend != "pyo3":
+            raise ValueError(
+                "rextio-tensorflow only supports the pyo3 host-extension backend; "
+                f"got {backend!r}"
+            )
         from rextio_tensorflow.lower import lower as lower_site
 
         return lower_site(claimed, ctx)
 
     def crate_dependencies(self) -> tuple[CrateDependency, ...]:
         """Return no Cargo crates: runtime binds the active TF wheel via dlsym."""
-        _require_api_13()
         return ()
 
 
