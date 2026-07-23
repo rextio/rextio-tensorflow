@@ -16,6 +16,8 @@ Changelog and Semantic Versioning conventions.
 - Claim/lower/fallback/lifetime coverage and real-Cargo numerical, shape, and
   dtype E2E proof for the classification head on the existing macOS arm64 and
   Linux x86_64 CI profiles.
+- Exact CPU int64 rank-1 parameter extraction for `TensorI64Cpu1D`, including
+  real-Cargo compile/runtime, rejection, materialization, and lifetime proof.
 
 ### Changed
 

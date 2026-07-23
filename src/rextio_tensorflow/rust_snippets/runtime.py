@@ -834,7 +834,8 @@ mod rextio_tensorflow_runtime {
             let actual_type = unsafe { (self.inner.api.tfe_tensor_handle_data_type)(self.inner.raw) };
             if actual_type != expected_type {
                 let expected = if expected_type == TF_FLOAT { "float32" } else { "int64" };
-                return Err(value_error(format!("expected a {expected} tensor")));
+                let article = if expected_type == TF_FLOAT { "a" } else { "an" };
+                return Err(value_error(format!("expected {article} {expected} tensor")));
             }
             let rank = self.rank()?;
             if rank != expected_rank {
@@ -1071,6 +1072,7 @@ mod rextio_tensorflow_runtime {
     fn extract_common(
         py: Python<'_>,
         value: &Bound<'_, PyAny>,
+        expected_type: c_int,
         expected_rank: c_int,
     ) -> PyResult<RxtTfTensor> {
         let api = load_api(py)?;
@@ -1097,7 +1099,15 @@ mod rextio_tensorflow_runtime {
         let pending = PendingHandle::new(api, raw);
         status.check("TFE_TensorHandleCopySharingTensor(input)")?;
         let tensor = RxtTfTensor::from_pending(pending, context)?;
-        tensor.validate_f32(expected_rank)?;
+        if expected_type == TF_FLOAT {
+            tensor.validate_f32(expected_rank)?;
+        } else if expected_type == TF_INT64 {
+            tensor.validate_i64(expected_rank)?;
+        } else {
+            return Err(runtime_error(format!(
+                "unsupported generated boundary dtype enum {expected_type}"
+            )));
+        }
         Ok(tensor)
     }
 
@@ -1105,14 +1115,21 @@ mod rextio_tensorflow_runtime {
         py: Python<'_>,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<RxtTfTensor> {
-        extract_common(py, value, 2)
+        extract_common(py, value, TF_FLOAT, 2)
     }
 
     pub fn extract_f32_cpu_1d(
         py: Python<'_>,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<RxtTfTensor> {
-        extract_common(py, value, 1)
+        extract_common(py, value, TF_FLOAT, 1)
+    }
+
+    pub fn extract_i64_cpu_1d(
+        py: Python<'_>,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<RxtTfTensor> {
+        extract_common(py, value, TF_INT64, 1)
     }
 
     pub fn materialize_tensor(

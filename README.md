@@ -55,8 +55,8 @@ plugin registration, the generated runtime helper
 | TensorFlow (Python) | **`tensorflow==2.21.0`** | `pyproject.toml` dependency; runtime checks `tf.__version__` |
 | TensorFlow (C) | **`TF_Version() == "2.21.0"`** | Runtime `Api::load` |
 | Device | **`CPU:0` only** | Boundary requires a backing-device name ending in `/device:CPU:0`; ops reuse that device |
-| Dtype | **float32 only** | Plugin types `tensor-f32-cpu-{1,2}d`; runtime dtype checks |
-| Ranks | **1 and 2 only** | Type vocabulary + claim/lower rules |
+| Dtype | **float32 operation inputs/intermediates; default-int64 ArgMax output** | Runtime checks float32 rank-1/2 inputs and exact int64 rank-1 classification output/boundaries |
+| Ranks | **float32 rank 1/2; int64 rank 1 only** | Type vocabulary + claim/lower and boundary checks |
 | Execution surface | **Inference-oriented only** | Training and `GradientTape` integration are unsupported. MatMul sets `grad_a` / `grad_b` false, but this is not a general TensorFlow no-grad guarantee. |
 | Generated Rust crate | Edition **2021**, `rust-version = "1.83"`, PyO3 **0.29** | Inherited from Rextio 0.1.3's generated Cargo manifest; the Rust version is an MSRV, not an exact toolchain patch pin |
 | Certified Rust toolchain | `rustc 1.93.1`, `cargo 1.93.1` on `aarch64-apple-darwin` | Used for the current real-Cargo Alpha evidence; this repo has no `rust-toolchain.toml` |
@@ -216,6 +216,11 @@ between helpers stay `TFE_TensorHandle`-native (`RxtTfTensor` RAII). Python
 Rust control flow. Tensor-data-dependent branches are not part of this plugin
 surface.
 
+`TensorI64Cpu1D` is the default `tf.argmax` result type and is also a real
+input boundary type: native functions annotated with it accept only exact
+CPU int64 rank-1 EagerTensors. They reject float inputs, other ranks,
+`tf.Variable`, alternate runtimes, and non-CPU devices before executing.
+
 ### Canonical lowered helpers
 
 Lowering emits calls into the exact generated module
@@ -239,8 +244,10 @@ Lowering emits calls into the exact generated module
 
 All of the following are required for a site to be **Claimed** and lowered:
 
-1. **Annotations** — operands are the plugin float32 CPU types above (not bare
-   `tf.Tensor`, not unannotated/`None` types).
+1. **Annotations** — claimed TensorFlow operation operands use the plugin
+   float32 CPU types above (not bare `tf.Tensor` or unannotated/`None` types).
+   `TensorI64Cpu1D` is limited to the classification result and exact rank-1
+   function input boundary; it is not accepted as a TensorFlow operation input.
 2. **Functional style only** — covered calls with a **receiver** are
    `NotCovered` (no method-style receivers on matmul / relu / sigmoid / add /
    reduce_mean). Lowering also rejects claimed/rendered receivers with
@@ -278,7 +285,8 @@ Anything outside the tables above is either:
 - `tf.Variable` or any non-exact EagerTensor at the Python boundary (E2E rejects it)
 - Graph / Session, `tf.function`, AutoGraph, Keras, or SavedModel
 - Tensor-data-dependent Python `if` / `for`, `tf.cond`, or `tf.while_loop`
-- Non-float32 dtypes; rank ≠ {1, 2}
+- Non-float32 operation inputs; int64 is supported only for the exact rank-1
+  ArgMax classification result and its annotated Python boundary
 - Rank-1 activations or matmul; rank-3+ / batched matmul
 - Dynamic reduction/classification axes; positional `axis`; `keepdims=True`; `tf.argmax(output_type=...)`
 - Matmul transpose / other keywords

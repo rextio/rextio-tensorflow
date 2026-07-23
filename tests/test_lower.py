@@ -118,6 +118,9 @@ def test_runtime_helper_has_same_wheel_and_ownership_hardening() -> None:
     assert "TFE_OpSetDevice" in helper
     assert "TF_AllocateTensor" in helper
     assert "TF_TensorData" in helper
+    assert "pub fn extract_i64_cpu_1d" in helper
+    assert "extract_common(py, value, TF_INT64, 1)" in helper
+    assert "tensor.validate_i64(expected_rank)?" in helper
     assert "unsafe impl Send" not in helper
     assert "RTLD_DEFAULT" not in helper
     assert "TF_NewTensor" not in helper

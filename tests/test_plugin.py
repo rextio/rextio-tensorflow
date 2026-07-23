@@ -160,6 +160,10 @@ def test_type_vocabulary_keys_and_boundary() -> None:
         "rextio_tensorflow.types.TensorF32Cpu1D",
         "rextio_tensorflow.types.TensorI64Cpu1D",
     }
+    by_key = {plugin_type.key: plugin_type for plugin_type in types}
+    i64_conversion = by_key["rextio-tensorflow/tensor-i64-cpu-1d"].conversion
+    assert i64_conversion is not None
+    assert "extract_i64_cpu_1d" in i64_conversion.param_expr
 
 
 def test_crate_dependencies_empty() -> None:

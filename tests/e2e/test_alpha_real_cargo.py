@@ -58,6 +58,15 @@ def inference(
             h = tf.nn.relu(h)
     probabilities = tf.nn.softmax(h + bias, axis=1)
     return tf.argmax(probabilities, axis=1)
+
+
+def classify_with_class_input(
+    logits: TensorF32Cpu2D,
+    classes: TensorI64Cpu1D,
+) -> TensorI64Cpu1D:
+    # The classes parameter intentionally exercises its exact native boundary;
+    # returning a newly computed tensor preserves Python/native identity semantics.
+    return tf.argmax(tf.nn.softmax(logits, axis=1), axis=1)
 """
 
 
@@ -369,6 +378,55 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
 
     gc.collect()
     assert all(_tensor_equal(output, reference) for output, reference in repeated)
+
+
+def test_i64_parameter_boundary_real_cargo(project: CertifiedProject) -> None:
+    """The registered int64 rank-1 parameter extractor compiles and fails closed."""
+    tf = _import_tf()
+    record = _route_of(project, "tf_app.kernels.classify_with_class_input")
+    assert record["native_status"] == "accepted"
+    assert record["route"] == "native-plugin:rextio-tensorflow"
+    claims = record.get("plugin_claims") or []
+    assert {claim["rule_id"] for claim in claims} == {
+        "rextio-tensorflow/softmax-axis1-f32-cpu-2d",
+        "rextio-tensorflow/argmax-axis1-i64-cpu-2d",
+    }
+
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "extract_i64_cpu_1d" in rust
+    assert "validate_i64" in rust
+
+    logits = tf.constant(
+        [[0.2, 0.7, 0.1], [0.9, 0.05, 0.05], [0.1, 0.2, 0.7], [0.4, 0.3, 0.3]],
+        dtype=tf.float32,
+    )
+    classes = tf.constant([2, 0, 1, 2], dtype=tf.int64)
+    snapshot = tf.identity(classes)
+    expected = tf.argmax(tf.nn.softmax(logits, axis=1), axis=1)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import classify_with_class_input
+
+        held = classify_with_class_input(logits, classes)
+
+        with pytest.raises(Exception, match="expected an int64 tensor"):
+            classify_with_class_input(logits, tf.constant([2, 0, 1, 2], dtype=tf.float32))
+        with pytest.raises(Exception, match="expected rank-1 tensor"):
+            classify_with_class_input(logits, tf.constant([[2, 0], [1, 2]], dtype=tf.int64))
+        with pytest.raises(TypeError, match="expected a TensorFlow EagerTensor"):
+            classify_with_class_input(logits, tf.Variable(snapshot))
+
+    assert _tensor_equal(classes, snapshot)
+    del classes, logits
+    import gc
+
+    gc.collect()
+    assert isinstance(held, tf.Tensor)
+    assert "CPU" in held.device
+    assert held.dtype == tf.int64
+    assert held.shape == (4,)
+    assert _tensor_equal(held, expected)
 
 
 class _native_mode:
