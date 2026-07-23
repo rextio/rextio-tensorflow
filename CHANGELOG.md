@@ -10,8 +10,10 @@ Changelog and Semantic Versioning conventions.
 - Prepared 0.1.1 compatibility with `rextio` 0.1.5 / plugin API 1.4 while
   retaining this provider's declared API **1.3** and its existing package,
   CPython, TensorFlow, and private-ABI pins.
-- Removed provider-side exact host API equality guards; Core's major-version
-  loader remains the compatibility authority.
+- Replaced provider-side exact host API equality guards with a compatible
+  minimum guard: host API 1.x minor 3 or newer is accepted, while older,
+  major-mismatched, or malformed hosts fail closed if dependencies are
+  bypassed. Core's loader remains the primary compatibility authority.
 - Reject standalone Rust lowering explicitly. This provider remains a PyO3
   host-extension-only plugin and does not declare `artifact_capability()`.
 - Added focused Core 0.1.3/0.1.4/0.1.5 CI compatibility coverage without

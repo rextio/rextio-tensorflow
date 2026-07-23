@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+import rextio.plugins.api as plugin_api
 from rextio.config.schema import PluginConfig, RextioConfig
 from rextio.plugins.api import (
     PLUGIN_DIAGNOSTIC_CODE_PATTERN,
@@ -69,6 +71,37 @@ def test_core_loader_accepts_api_13_provider_without_artifact_capability() -> No
     assert active.api_version == "1.3"
     assert getattr(active, "artifact_capability_declared", False) is False
     assert not hasattr(plugin(), "artifact_capability")
+
+
+@pytest.mark.parametrize("host_api", ("1.3", "1.4"))
+def test_provider_accepts_compatible_host_plugin_api(monkeypatch, host_api: str) -> None:
+    monkeypatch.setattr(plugin_api, "PLUGIN_API_VERSION", host_api)
+
+    assert plugin().covers() == COVERAGE
+
+
+@pytest.mark.parametrize(
+    "host_api",
+    ("1.2", "2.0", "invalid", "1", "1.3.0", "1.03", "", pytest.param(None, id="none")),
+)
+def test_all_provider_methods_reject_incompatible_host_plugin_api(
+    monkeypatch, host_api: object
+) -> None:
+    monkeypatch.setattr(plugin_api, "PLUGIN_API_VERSION", host_api)
+    provider = plugin()
+    calls = (
+        provider.to_rextio_plugin,
+        provider.covers,
+        lambda: provider.describe(None),
+        provider.type_vocabulary,
+        lambda: provider.claim(None, None),
+        lambda: provider.lower(None, None),
+        provider.crate_dependencies,
+    )
+
+    for call in calls:
+        with pytest.raises(RuntimeError, match="plugin API 1.x with minor >= 3"):
+            call()
 
 
 def test_covers_alpha_surface() -> None:

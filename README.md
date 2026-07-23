@@ -21,7 +21,9 @@ wheel’s public TFE C API plus a **private** EagerTensor bridge
 
 This hotfix remains a plugin API **1.3** provider and supports Core 0.1.5's
 API 1.4 host-extension path. It rejects boundary-free standalone Rust lowering
-and does not opt into standalone artifact capability.
+and does not opt into standalone artifact capability. Provider entry methods
+also fail closed unless the host advertises API 1.x minor 3 or newer, protecting
+the API-1.3 field boundary even if package dependencies are bypassed.
 
 Final release verification completed on 2026-07-18: GitHub Actions
 [run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
