@@ -1217,6 +1217,17 @@ mod rextio_tensorflow_runtime {
         })
     }
 
+    pub fn mul(left: &RxtTfTensor, right: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            let expected_rank = if left.rank()? == 2 || right.rank()? == 2 {
+                2
+            } else {
+                1
+            };
+            binary(left, right, "Mul", false, expected_rank)
+        })
+    }
+
     pub fn relu(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
         Python::attach(|_py| unary(input, "Relu"))
     }

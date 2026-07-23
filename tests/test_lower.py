@@ -16,7 +16,7 @@ from rextio.plugins.api import (
 )
 
 from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE, TANH_RULE
-from rextio_tensorflow.claim.add import ADD_BINOP_RULE
+from rextio_tensorflow.claim.add import ADD_BINOP_RULE, MUL_BINOP_RULE
 from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
 from rextio_tensorflow.claim.reductions import MEAN_RULE, SUM_RULE
@@ -173,6 +173,27 @@ def test_lower_add_binop() -> None:
     )
     lowered = PLUGIN.lower(claimed, ctx)
     assert lowered.rust == "rextio_tensorflow_runtime::add(&x, &b)?"
+
+
+def test_lower_multiply_binop_revalidates_broadcast_metadata() -> None:
+    claimed = ClaimSite(
+        kind="binop",
+        target="*",
+        operand_types=(TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=MUL_BINOP_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+    )
+    ctx = LoweringContext(
+        operands=("x", "scale"), target_language="rust", fresh_name=_fresh_name
+    )
+    lowered = PLUGIN.lower(claimed, ctx)
+    assert lowered.rust == "rextio_tensorflow_runtime::mul(&x, &scale)?"
+    malformed = replace(claimed, result_type=TENSOR_F32_CPU_1D)
+    with pytest.raises(ValueError, match="operand/result"):
+        PLUGIN.lower(malformed, ctx)
 
 
 def test_lower_reduce_mean_axis1() -> None:

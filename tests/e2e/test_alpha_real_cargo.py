@@ -73,6 +73,22 @@ def classify_with_class_input(
 
 def reduce_sum_axis1(x: TensorF32Cpu2D) -> TensorF32Cpu1D:
     return tf.reduce_sum(x, axis=1, keepdims=False)
+
+
+def multiply_1d(left: TensorF32Cpu1D, right: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return left * right
+
+
+def multiply_2d(left: TensorF32Cpu2D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return left * right
+
+
+def multiply_2d_1d(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2D:
+    return left * right
+
+
+def multiply_1d_2d(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return left * right
 """
 
 
@@ -517,6 +533,93 @@ def test_reduce_sum_axis1_real_cargo(project: CertifiedProject) -> None:
 
     gc.collect()
     assert _tensor_equal(held, eager_regular)
+
+
+def test_multiply_real_cargo(project: CertifiedProject) -> None:
+    """Certify all bounded Mul rank pairs and fail-closed runtime behavior."""
+    tf = _import_tf()
+    rule_id = "rextio-tensorflow/mul-binop-f32-cpu"
+    for qualname in (
+        "tf_app.kernels.multiply_1d",
+        "tf_app.kernels.multiply_2d",
+        "tf_app.kernels.multiply_2d_1d",
+        "tf_app.kernels.multiply_1d_2d",
+    ):
+        record = _route_of(project, qualname)
+        assert record["native_status"] == "accepted"
+        assert record["route"] == "native-plugin:rextio-tensorflow"
+        assert [claim["rule_id"] for claim in record.get("plugin_claims") or []] == [rule_id]
+
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "rextio_tensorflow_runtime::mul" in rust
+    assert 'binary(left, right, "Mul", false, expected_rank)' in rust
+
+    vector_left = tf.constant([2.0, -3.0, 0.5], dtype=tf.float32)
+    vector_right = tf.constant([4.0, -2.0, 8.0], dtype=tf.float32)
+    matrix_left = tf.constant([[1.0, -2.0, 3.0], [4.0, 0.5, -1.0]], dtype=tf.float32)
+    matrix_right = tf.constant([[2.0, 3.0, -1.0], [0.25, -4.0, 2.0]], dtype=tf.float32)
+
+    cases = (
+        ("tf_app.kernels.multiply_1d", (vector_left, vector_right)),
+        ("tf_app.kernels.multiply_2d", (matrix_left, matrix_right)),
+        ("tf_app.kernels.multiply_2d_1d", (matrix_left, vector_right)),
+        ("tf_app.kernels.multiply_1d_2d", (vector_right, matrix_left)),
+    )
+    for qualname, args in cases:
+        snapshots = _copy_tensor_args(args)
+        checker = project.equivalence_checker(
+            qualname,
+            equals=_tensor_equal,
+            args_equals=_args_unmutated,
+            copy_args=_copy_tensor_args,
+        )
+        native = checker(*args)
+        eager = snapshots[0] * snapshots[1]
+        assert _tensor_equal(native, eager)
+        assert native.dtype == tf.float32
+        assert "CPU" in native.device
+        assert all(_tensor_equal(arg, snapshot) for arg, snapshot in zip(args, snapshots))
+
+    # Special values keep TensorFlow's classes and zero signs exactly.
+    special_left = tf.constant([0.0, -0.0, float("nan"), 2.0], dtype=tf.float32)
+    special_right = tf.constant([float("inf"), 2.0, 1.0, float("inf")], dtype=tf.float32)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import multiply_1d
+
+        native_special = multiply_1d(special_left, special_right)
+    eager_special = special_left * special_right
+    native_values = native_special.numpy().tolist()
+    eager_values = eager_special.numpy().tolist()
+    assert math.isnan(native_values[0]) and math.isnan(eager_values[0])
+    assert native_values[1] == eager_values[1] == 0.0
+    assert math.copysign(1.0, native_values[1]) == math.copysign(1.0, eager_values[1])
+    assert math.isnan(native_values[2]) and math.isnan(eager_values[2])
+    assert native_values[3] == eager_values[3] == float("inf")
+
+    with _native_mode(project, "native"):
+        from tf_app.kernels import multiply_2d_1d
+
+        with pytest.raises(Exception):
+            multiply_2d_1d(matrix_left, tf.constant([1.0, 2.0], dtype=tf.float32))
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            multiply_2d_1d(tf.cast(matrix_left, tf.float64), vector_right)
+        with pytest.raises(Exception, match="rank-2"):
+            multiply_2d_1d(vector_left, vector_right)
+
+    left_live = tf.identity(matrix_left)
+    right_live = tf.identity(vector_right)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import multiply_2d_1d
+
+        held = multiply_2d_1d(left_live, right_live)
+    expected_held = matrix_left * vector_right
+    del left_live, right_live
+    import gc
+
+    gc.collect()
+    assert _tensor_equal(held, expected_held)
 
 
 class _native_mode:

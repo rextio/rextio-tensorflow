@@ -14,6 +14,10 @@ Changelog and Semantic Versioning conventions.
   tensors. The owned TFE `Sum` path reuses the rank-1 axis handle, int32
   `Tidx`, RAII ownership, and rank-1 result validation of reduce-mean; dynamic,
   positional, duplicate, wrong, and extra metadata remains fail-closed.
+- Add binary `a * b` for float32 CPU rank-1/rank-2 same-rank or trailing
+  rank-2↔rank-1 broadcast pairs only. The owned TFE `Mul` path reuses the
+  existing binary RAII/context/device checks; functional aliases and scalars
+  remain outside the Alpha surface.
 
 - Narrow CPU inference classification-head lane: rank-2 float32
   `tf.nn.softmax(axis=1)` followed by `tf.argmax(axis=1)` with the default

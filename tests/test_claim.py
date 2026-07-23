@@ -15,7 +15,7 @@ from rextio.plugins.api import (
 )
 
 from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE, TANH_RULE
-from rextio_tensorflow.claim.add import ADD_BINOP_RULE, ADD_CALL_RULE
+from rextio_tensorflow.claim.add import ADD_BINOP_RULE, ADD_CALL_RULE, MUL_BINOP_RULE
 from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
 from rextio_tensorflow.claim.reductions import MEAN_RULE, SUM_RULE
@@ -99,6 +99,51 @@ def test_claims_binop_add() -> None:
         CONFIG,
     )
     assert result == Claimed(rule_id=ADD_BINOP_RULE, result_type=TENSOR_F32_CPU_2D)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "result_type"),
+    (
+        (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D),
+        (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D),
+        (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D),
+        (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D),
+    ),
+)
+def test_claims_binop_multiply(
+    left: str, right: str, result_type: str
+) -> None:
+    result = PLUGIN.claim(
+        ClaimSite(
+            kind="binop",
+            target="*",
+            operand_types=(left, right),
+            file_path="",
+            line=0,
+            column=0,
+        ),
+        CONFIG,
+    )
+    assert result == Claimed(rule_id=MUL_BINOP_RULE, result_type=result_type)
+
+
+def test_multiply_rejects_scalars_and_functional_aliases() -> None:
+    scalar = PLUGIN.claim(
+        ClaimSite(
+            kind="binop",
+            target="*",
+            operand_types=(TENSOR_F32_CPU_2D, "float"),
+            file_path="",
+            line=0,
+            column=0,
+        ),
+        CONFIG,
+    )
+    assert isinstance(scalar, Rejected)
+    alias = PLUGIN.claim(
+        _call("tensorflow.multiply", (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D)), CONFIG
+    )
+    assert isinstance(alias, NotCovered)
 
 
 def test_binop_add_rejection_uses_binop_diagnostic_authority() -> None:

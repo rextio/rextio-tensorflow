@@ -102,6 +102,31 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/mul-binop-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="binop",
+            pattern=(
+                "binary * on float32 CPU rank-2 (+ optional rank-1 bias) or "
+                "same-rank tensors"
+            ),
+        ),
+        constraint=(
+            "Binop '*' over two float32 CPU plugin tensors only: rank-2 * rank-2, "
+            "rank-1 * rank-1, or rank-2 * rank-1 trailing broadcast (either order). "
+            "Concrete broadcast dimensions are checked by TFE Mul at runtime. "
+            "Functional tf.multiply aliases and scalar operands are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-012",
+        guidance=(
+            "Write x * y with TensorF32Cpu2D / TensorF32Cpu1D annotations on "
+            "the Alpha-supported broadcast shapes."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d",
         provider="rextio-tensorflow",
         scope=RuleScope(
@@ -253,7 +278,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="fallback",
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
-            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, "
+            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, multiply, "
             "reduce_mean(axis=1), reduce_sum(axis=1), sigmoid, tanh, softmax(axis=1), and default-int64 "
             "argmax(axis=1); other dtypes, devices, ranks, and dynamic literals "
             "remain on the fallback."
