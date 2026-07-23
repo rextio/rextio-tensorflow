@@ -19,7 +19,7 @@ from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
 
 
 def _literal_axis(claimed: ClaimSite, operation: str) -> int:
-    values = {keyword.name: keyword.literal for keyword in claimed.keywords}
+    values = {keyword.name: keyword for keyword in claimed.keywords}
     if len(values) != len(claimed.keywords):
         raise ValueError(
             f"rextio-tensorflow {operation} lower rejects duplicate axis/keyword metadata"
@@ -29,7 +29,12 @@ def _literal_axis(claimed: ClaimSite, operation: str) -> int:
             raise ValueError(
                 f"rextio-tensorflow {operation} lower requires only one literal axis keyword"
             )
-        axis = values["axis"]
+        axis_keyword = values["axis"]
+        if axis_keyword.arg_type != "int":
+            raise ValueError(
+                f"rextio-tensorflow {operation} lower axis keyword requires arg_type='int'"
+            )
+        axis = axis_keyword.literal
     elif len(claimed.operand_types) == 2:
         if values:
             raise ValueError(
@@ -68,10 +73,11 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
         raise ValueError("rextio-tensorflow functional classification lower forbids receivers")
     if not claimed.operand_types or claimed.operand_types[0] != TENSOR_F32_CPU_2D:
         raise ValueError("rextio-tensorflow classification lower requires rank-2 float32 input")
-    if len(ctx.operands) not in {1, len(claimed.operand_types)}:
+    if len(ctx.operands) != len(claimed.operand_types):
         raise ValueError(
-            "rextio-tensorflow classification lower requires the tensor operand; "
-            "a positional literal axis is metadata-only"
+            "rextio-tensorflow classification lower requires one rendered operand "
+            "per claimed positional argument; the literal axis slot is validated "
+            "but not emitted as a TFE input"
         )
     x = ctx.operands[0]
     axis = _literal_axis(claimed, "classification")

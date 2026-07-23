@@ -36,7 +36,7 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
         raise ValueError(f"rextio-tensorflow functional {operation} lower forbids receivers")
     if not claimed.operand_types or claimed.operand_types[0] != TENSOR_F32_CPU_2D:
         raise ValueError(f"rextio-tensorflow received malformed {operation} lower metadata")
-    values = {kw.name: kw.literal for kw in claimed.keywords}
+    values = {kw.name: kw for kw in claimed.keywords}
     if len(values) != len(claimed.keywords):
         raise ValueError(
             f"rextio-tensorflow {operation} lower rejects duplicate axis/keyword metadata"
@@ -49,7 +49,12 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
     if len(claimed.operand_types) == 1:
         if "axis" not in values:
             raise ValueError(f"rextio-tensorflow {operation} lower requires axis metadata")
-        axis_lit = values["axis"]
+        axis_keyword = values["axis"]
+        if axis_keyword.arg_type != "int":
+            raise ValueError(
+                f"rextio-tensorflow {operation} lower axis keyword requires arg_type='int'"
+            )
+        axis_lit = axis_keyword.literal
     elif len(claimed.operand_types) == 2:
         if "axis" in values:
             raise ValueError(
@@ -86,21 +91,27 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
     keepdims = False
     if "keepdims" in values:
         keep = values["keepdims"]
-        if not keep.is_literal or not isinstance(keep.value, bool):
+        if (
+            keep.arg_type != "bool"
+            or not keep.literal.is_literal
+            or not isinstance(keep.literal.value, bool)
+        ):
             raise ValueError(
-                f"rextio-tensorflow {operation} lower requires literal bool keepdims"
+                f"rextio-tensorflow {operation} lower requires arg_type='bool' "
+                "and literal bool keepdims"
             )
-        keepdims = keep.value
+        keepdims = keep.literal.value
     expected_result = TENSOR_F32_CPU_2D if keepdims else TENSOR_F32_CPU_1D
     expected_rule = legacy_rule if axis == 1 and not keepdims else general_rule
     if claimed.rule_id != expected_rule or claimed.result_type != expected_result:
         raise ValueError(
             f"rextio-tensorflow {operation} lower rule/result metadata changed after claim"
         )
-    if len(ctx.operands) not in {1, len(claimed.operand_types)}:
+    if len(ctx.operands) != len(claimed.operand_types):
         raise ValueError(
-            f"rextio-tensorflow {operation} lower requires the tensor operand; "
-            "a positional literal axis is metadata-only"
+            f"rextio-tensorflow {operation} lower requires one rendered operand "
+            "per claimed positional argument; the literal axis slot is validated "
+            "but not emitted as a TFE input"
         )
     x = ctx.operands[0]
     helper = f"{helper_prefix}_axis{axis}"

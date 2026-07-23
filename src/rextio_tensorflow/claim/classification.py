@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from rextio.plugins.api import Claimed, ClaimResult, ClaimSite, NotCovered
+from rextio.plugins.api import Claimed, ClaimResult, ClaimSite, KeywordArg, NotCovered
 
 from rextio_tensorflow.diagnostics import (
     DIAGNOSTIC_ARGMAX,
@@ -21,14 +21,14 @@ SOFTMAX_TARGETS = frozenset({"tensorflow.nn.softmax", "tf.nn.softmax"})
 ARGMAX_TARGETS = frozenset({"tensorflow.argmax", "tf.argmax"})
 
 
-def _literal_keywords(site: ClaimSite) -> dict[str, object] | None:
-    values: dict[str, object] = {}
+def _literal_keywords(site: ClaimSite) -> dict[str, KeywordArg] | None:
+    values: dict[str, KeywordArg] = {}
     for keyword in site.keywords:
         if not keyword.literal.is_literal:
             return None
         if keyword.name in values:
             return None
-        values[keyword.name] = keyword.literal.value
+        values[keyword.name] = keyword
     return values
 
 
@@ -51,9 +51,15 @@ def _literal_axis(
                 f"{operation} accepts only one literal axis keyword",
                 "Do not pass keepdims, output_type, name, or other keywords.",
             )
-        axis_literal = next(
-            keyword.literal for keyword in site.keywords if keyword.name == "axis"
-        )
+        axis_keyword = values["axis"]
+        if axis_keyword.arg_type != "int":
+            return reject(
+                site,
+                diagnostic,
+                f"{operation} axis metadata must have arg_type='int'",
+                "Use a literal integer axis 0 or 1.",
+            )
+        axis_literal = axis_keyword.literal
     elif len(site.operand_types) == 2:
         if values:
             return reject(

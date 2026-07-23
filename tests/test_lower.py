@@ -363,18 +363,19 @@ def test_lower_reduction_positional_axis_is_metadata_only(
             ),
         ),
     )
-    one_operand_ctx = LoweringContext(
-        operands=("h",), target_language="rust", fresh_name=_fresh_name
-    )
-    lowered = PLUGIN.lower(claimed, one_operand_ctx)
-    assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&h)?"
-
-    core_direct_ctx = replace(
-        one_operand_ctx, operands=("h", "axis_must_not_reach_runtime")
+    core_direct_ctx = LoweringContext(
+        operands=("h", "axis_must_not_reach_runtime"),
+        target_language="rust",
+        fresh_name=_fresh_name,
     )
     lowered_direct = PLUGIN.lower(claimed, core_direct_ctx)
-    assert lowered_direct.rust == lowered.rust
+    assert lowered_direct.rust == f"rextio_tensorflow_runtime::{helper}(&h)?"
     assert "axis_must_not_reach_runtime" not in lowered_direct.rust
+    with pytest.raises(ValueError, match="one rendered operand"):
+        PLUGIN.lower(
+            claimed,
+            replace(core_direct_ctx, operands=("h",)),
+        )
 
 
 @pytest.mark.parametrize(
@@ -410,7 +411,9 @@ def test_lower_rejects_forged_positional_axis_alignment(
         PLUGIN.lower(
             claimed,
             LoweringContext(
-                operands=("h",), target_language="rust", fresh_name=_fresh_name
+                operands=("h", "axis"),
+                target_language="rust",
+                fresh_name=_fresh_name,
             ),
         )
 
@@ -495,14 +498,15 @@ def test_lower_classification_positional_axis_is_metadata_only(
         result_type=result_type,
     )
     ctx = LoweringContext(
-        operands=("h",), target_language="rust", fresh_name=_fresh_name
+        operands=("h", "axis_must_not_reach_runtime"),
+        target_language="rust",
+        fresh_name=_fresh_name,
     )
     lowered = PLUGIN.lower(claimed, ctx)
     assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&h)?"
-    lowered_direct = PLUGIN.lower(
-        claimed, replace(ctx, operands=("h", "axis_must_not_reach_runtime"))
-    )
-    assert lowered_direct.rust == lowered.rust
+    assert "axis_must_not_reach_runtime" not in lowered.rust
+    with pytest.raises(ValueError, match="one rendered operand"):
+        PLUGIN.lower(claimed, replace(ctx, operands=("h",)))
 
 
 def test_classification_lower_revalidates_default_int64_contract() -> None:
@@ -562,6 +566,82 @@ def test_lower_rejects_forged_duplicate_literal_axis_metadata(
         PLUGIN.lower(
             claimed,
             LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),
+        )
+
+
+@pytest.mark.parametrize(
+    ("target", "rule", "result_type", "keywords", "message"),
+    (
+        (
+            "tensorflow.reduce_mean",
+            MEAN_GENERAL_RULE,
+            TENSOR_F32_CPU_1D,
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type=TENSOR_F32_CPU_1D,
+                    literal=ClaimLiteral(is_literal=True, value=0),
+                ),
+            ),
+            "arg_type='int'",
+        ),
+        (
+            "tensorflow.reduce_sum",
+            SUM_GENERAL_RULE,
+            TENSOR_F32_CPU_2D,
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type="int",
+                    literal=ClaimLiteral(is_literal=True, value=0),
+                ),
+                KeywordArg(
+                    name="keepdims",
+                    arg_type="int",
+                    literal=ClaimLiteral(is_literal=True, value=True),
+                ),
+            ),
+            "arg_type='bool'",
+        ),
+        (
+            "tensorflow.argmax",
+            ARGMAX_AXIS0_RULE,
+            TENSOR_I64_CPU_1D,
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type=TENSOR_F32_CPU_1D,
+                    literal=ClaimLiteral(is_literal=True, value=0),
+                ),
+            ),
+            "arg_type='int'",
+        ),
+    ),
+)
+def test_lower_rejects_axis_keyword_arg_type_literal_contradictions(
+    target: str,
+    rule: str,
+    result_type: str,
+    keywords: tuple[KeywordArg, ...],
+    message: str,
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target=target,
+        operand_types=(TENSOR_F32_CPU_2D,),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=rule,
+        result_type=result_type,
+        keywords=keywords,
+    )
+    with pytest.raises(ValueError, match=message):
+        PLUGIN.lower(
+            claimed,
+            LoweringContext(
+                operands=("h",), target_language="rust", fresh_name=_fresh_name
+            ),
         )
 
 

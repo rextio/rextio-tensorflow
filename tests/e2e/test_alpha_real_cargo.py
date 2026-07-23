@@ -89,6 +89,52 @@ def multiply_2d_1d(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2
 
 def multiply_1d_2d(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
     return left * right
+
+
+def rank1_activations(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(x)))
+
+
+def subtract_2d_1d(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2D:
+    return tf.subtract(left, right)
+
+
+def subtract_1d_2d(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return left - right
+
+
+def divide_2d_1d(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2D:
+    return tf.divide(left, right)
+
+
+def divide_1d_2d(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return left / right
+
+
+def reduce_mean_axis0_keepdims(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.reduce_mean(x, 0, keepdims=True)
+
+
+def reduce_sum_axis1_keepdims(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.reduce_sum(x, axis=1, keepdims=True)
+
+
+def argmax_axis0(x: TensorF32Cpu2D) -> TensorI64Cpu1D:
+    return tf.argmax(x, 0)
+
+
+def cpu_surface_vertical(
+    matrix: TensorF32Cpu2D,
+    gate_input: TensorF32Cpu1D,
+    bias: TensorF32Cpu1D,
+) -> TensorI64Cpu1D:
+    gate = tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(gate_input)))
+    multiplied = tf.multiply(matrix, gate)
+    shifted = multiplied - bias
+    divided = tf.divide(gate, shifted)
+    column_summary = tf.reduce_mean(divided, 0, keepdims=True)
+    row_summary = tf.reduce_sum(column_summary, axis=1, keepdims=True)
+    return tf.argmax(row_summary, 0)
 """
 
 
@@ -468,9 +514,9 @@ def test_reduce_sum_axis1_real_cargo(project: CertifiedProject) -> None:
         encoding="utf-8"
     )
     assert "rextio_tensorflow_runtime::reduce_sum_axis1" in rust
-    assert "fn reduce_axis1(input: &RxtTfTensor, op_name: &str)" in rust
+    assert "fn reduce_axis(" in rust
     assert "OwnedOp::new(Rc::clone(&context), op_name, &status)" in rust
-    assert 'reduce_axis1(input, "Sum")' in rust
+    assert 'reduce_axis(input, "Sum", 1, false)' in rust
     assert "TFE_NewTensorHandle(reduction axis)" in rust
 
     regular = tf.constant([[1.5, -2.0, 3.0], [-4.0, 0.5, 1.0]], dtype=tf.float32)
@@ -621,6 +667,236 @@ def test_multiply_real_cargo(project: CertifiedProject) -> None:
     import gc
 
     gc.collect()
+    assert _tensor_equal(held, expected_held)
+
+
+def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
+    """Certify the new unary/binary/axis surface in one owned TFE vertical slice."""
+    tf = _import_tf()
+    expected_rules = {
+        "tf_app.kernels.rank1_activations": {
+            "rextio-tensorflow/relu-f32-cpu-1d",
+            "rextio-tensorflow/sigmoid-f32-cpu-1d",
+            "rextio-tensorflow/tanh-f32-cpu-1d",
+        },
+        "tf_app.kernels.subtract_2d_1d": {
+            "rextio-tensorflow/sub-call-f32-cpu"
+        },
+        "tf_app.kernels.subtract_1d_2d": {
+            "rextio-tensorflow/sub-binop-f32-cpu"
+        },
+        "tf_app.kernels.divide_2d_1d": {
+            "rextio-tensorflow/div-call-f32-cpu"
+        },
+        "tf_app.kernels.divide_1d_2d": {
+            "rextio-tensorflow/div-binop-f32-cpu"
+        },
+        "tf_app.kernels.reduce_mean_axis0_keepdims": {
+            "rextio-tensorflow/reduce-mean-literal-axis-f32-cpu-2d"
+        },
+        "tf_app.kernels.reduce_sum_axis1_keepdims": {
+            "rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d"
+        },
+        "tf_app.kernels.argmax_axis0": {
+            "rextio-tensorflow/argmax-axis0-i64-cpu-2d"
+        },
+    }
+    for qualname, rules in expected_rules.items():
+        record = _route_of(project, qualname)
+        assert record["native_status"] == "accepted"
+        assert record["route"] == "native-plugin:rextio-tensorflow"
+        assert {claim["rule_id"] for claim in record.get("plugin_claims") or []} == rules
+
+    vertical_record = _route_of(project, "tf_app.kernels.cpu_surface_vertical")
+    assert vertical_record["native_status"] == "accepted"
+    vertical_rules = {
+        claim["rule_id"] for claim in vertical_record.get("plugin_claims") or []
+    }
+    assert {
+        "rextio-tensorflow/relu-f32-cpu-1d",
+        "rextio-tensorflow/sigmoid-f32-cpu-1d",
+        "rextio-tensorflow/tanh-f32-cpu-1d",
+        "rextio-tensorflow/mul-call-f32-cpu",
+        "rextio-tensorflow/sub-binop-f32-cpu",
+        "rextio-tensorflow/div-call-f32-cpu",
+        "rextio-tensorflow/reduce-mean-literal-axis-f32-cpu-2d",
+        "rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d",
+        "rextio-tensorflow/argmax-axis0-i64-cpu-2d",
+    }.issubset(vertical_rules)
+
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    assert 'binary(left, right, "Sub", false, expected_rank)' in rust
+    assert 'binary(left, right, "RealDiv", false, expected_rank)' in rust
+    assert 'reduce_axis(input, "Mean", 0, true)' in rust
+    assert 'reduce_axis(input, "Sum", 1, true)' in rust
+    assert "argmax(input, 0)" in rust
+    assert "input.validate_f32(expected_rank)?" in rust
+    assert "TFE_TensorHandleBackingDeviceName" in rust
+    assert "TFE_OpSetDevice" in rust
+    assert "Rc<OwnedTensorHandle>" in rust
+    assert "TFE_TensorHandleResolve" not in rust
+    assert "TFE_NewContext" not in rust
+
+    vector = tf.constant([1.0, -2.0, 3.0], dtype=tf.float32)
+    divisor = tf.constant([2.0, -4.0, 0.5], dtype=tf.float32)
+    matrix = tf.constant(
+        [[2.0, -8.0, 1.5], [4.0, 12.0, -0.5]], dtype=tf.float32
+    )
+    matrix_other = tf.constant(
+        [[0.5, -1.0, 2.0], [3.0, 4.0, -2.0]], dtype=tf.float32
+    )
+
+    finite_cases = (
+        (
+            "tf_app.kernels.rank1_activations",
+            (vector,),
+            lambda args: tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(args[0]))),
+        ),
+        (
+            "tf_app.kernels.subtract_2d_1d",
+            (matrix, vector),
+            lambda args: tf.subtract(args[0], args[1]),
+        ),
+        (
+            "tf_app.kernels.subtract_1d_2d",
+            (vector, matrix),
+            lambda args: args[0] - args[1],
+        ),
+        (
+            "tf_app.kernels.divide_2d_1d",
+            (matrix, divisor),
+            lambda args: tf.divide(args[0], args[1]),
+        ),
+        (
+            "tf_app.kernels.divide_1d_2d",
+            (divisor, matrix),
+            lambda args: args[0] / args[1],
+        ),
+        (
+            "tf_app.kernels.reduce_mean_axis0_keepdims",
+            (matrix,),
+            lambda args: tf.reduce_mean(args[0], 0, keepdims=True),
+        ),
+        (
+            "tf_app.kernels.reduce_sum_axis1_keepdims",
+            (matrix,),
+            lambda args: tf.reduce_sum(args[0], axis=1, keepdims=True),
+        ),
+        (
+            "tf_app.kernels.argmax_axis0",
+            (matrix,),
+            lambda args: tf.argmax(args[0], 0),
+        ),
+    )
+    for qualname, args, eager_call in finite_cases:
+        snapshots = _copy_tensor_args(args)
+        checker = project.equivalence_checker(
+            qualname,
+            equals=_tensor_equal,
+            args_equals=_args_unmutated,
+            copy_args=_copy_tensor_args,
+        )
+        native = checker(*args)
+        eager = eager_call(snapshots)
+        assert _tensor_equal(native, eager)
+        assert "CPU" in native.device
+        assert all(
+            _tensor_equal(arg, snapshot)
+            for arg, snapshot in zip(args, snapshots)
+        )
+
+    assert project.equivalence_checker(
+        "tf_app.kernels.cpu_surface_vertical",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )(matrix_other, vector, divisor).dtype == tf.int64
+
+    special_left = tf.constant(
+        [0.0, -0.0, float("nan"), 1.0, float("inf")], dtype=tf.float32
+    )
+    special_right = tf.constant(
+        [float("-0.0"), 2.0, 1.0, 0.0, float("inf")], dtype=tf.float32
+    )
+    with _native_mode(project, "native"):
+        from tf_app.kernels import divide_1d_2d, subtract_1d_2d
+
+        native_sub = subtract_1d_2d(
+            special_left,
+            tf.stack((special_right, special_right)),
+        )
+        native_div = divide_1d_2d(
+            special_left,
+            tf.stack((special_right, special_right)),
+        )
+    eager_sub = special_left - tf.stack((special_right, special_right))
+    eager_div = special_left / tf.stack((special_right, special_right))
+    for native, eager in ((native_sub, eager_sub), (native_div, eager_div)):
+        native_values = native.numpy().ravel().tolist()
+        eager_values = eager.numpy().ravel().tolist()
+        for native_value, eager_value in zip(
+            native_values, eager_values, strict=True
+        ):
+            if math.isnan(eager_value):
+                assert math.isnan(native_value)
+                continue
+            assert native_value == eager_value
+            if eager_value == 0.0:
+                assert math.copysign(1.0, native_value) == math.copysign(
+                    1.0, eager_value
+                )
+
+    with _native_mode(project, "native"):
+        from tf_app.kernels import (
+            cpu_surface_vertical,
+            divide_2d_1d,
+            rank1_activations,
+        )
+
+        with pytest.raises(Exception):
+            divide_2d_1d(
+                matrix,
+                tf.constant([1.0, 2.0], dtype=tf.float32),
+            )
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            rank1_activations(tf.cast(vector, tf.float64))
+        with pytest.raises(Exception, match="rank-1"):
+            rank1_activations(matrix)
+
+        matrix_live = tf.identity(matrix_other)
+        gate_live = tf.identity(vector)
+        bias_live = tf.identity(divisor)
+        held = cpu_surface_vertical(matrix_live, gate_live, bias_live)
+        expected_held = tf.argmax(
+            tf.reduce_sum(
+                tf.reduce_mean(
+                    tf.divide(
+                        tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(gate_live))),
+                        (
+                            tf.multiply(
+                                matrix_live,
+                                tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(gate_live))),
+                            )
+                            - bias_live
+                        ),
+                    ),
+                    0,
+                    keepdims=True,
+                ),
+                axis=1,
+                keepdims=True,
+            ),
+            0,
+        )
+    del matrix_live, gate_live, bias_live
+    import gc
+
+    gc.collect()
+    assert isinstance(held, tf.Tensor)
+    assert "CPU" in held.device
+    assert held.dtype == tf.int64
     assert _tensor_equal(held, expected_held)
 
 

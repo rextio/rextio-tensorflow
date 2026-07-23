@@ -583,6 +583,65 @@ def test_classification_rejects_forged_keepdims_keyword(target: str) -> None:
 @pytest.mark.parametrize(
     ("target", "keywords"),
     (
+        (
+            "tensorflow.reduce_mean",
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type=TENSOR_F32_CPU_1D,
+                    literal=ClaimLiteral(is_literal=True, value=0),
+                ),
+            ),
+        ),
+        (
+            "tensorflow.reduce_sum",
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type="int",
+                    literal=ClaimLiteral(is_literal=True, value=1),
+                ),
+                KeywordArg(
+                    name="keepdims",
+                    arg_type="int",
+                    literal=ClaimLiteral(is_literal=True, value=True),
+                ),
+            ),
+        ),
+        (
+            "tensorflow.argmax",
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type=TENSOR_F32_CPU_1D,
+                    literal=ClaimLiteral(is_literal=True, value=0),
+                ),
+            ),
+        ),
+        (
+            "tensorflow.nn.softmax",
+            (
+                KeywordArg(
+                    name="axis",
+                    arg_type="bool",
+                    literal=ClaimLiteral(is_literal=True, value=1),
+                ),
+            ),
+        ),
+    ),
+)
+def test_axis_keyword_arg_type_literal_contradictions_are_rejected(
+    target: str, keywords: tuple[KeywordArg, ...]
+) -> None:
+    result = PLUGIN.claim(
+        _call(target, (TENSOR_F32_CPU_2D,), keywords=keywords), CONFIG
+    )
+    assert isinstance(result, Rejected)
+
+
+@pytest.mark.parametrize(
+    ("target", "keywords"),
+    (
         ("tensorflow.nn.softmax", ()),
         (
             "tensorflow.nn.softmax",

@@ -7,6 +7,26 @@ Changelog and Semantic Versioning conventions.
 
 ### Added
 
+- Expand the bounded CPU surface with rank-1 `tf.nn.relu` / `sigmoid` / `tanh`;
+  exact `tf.multiply` / `tf.math.multiply`, `tf.subtract` /
+  `tf.math.subtract`, and `tf.divide` / `tf.math.divide` call targets; and
+  matching `*`, `-`, and `/` operators across the existing rank-1/rank-2
+  same-rank and trailing-broadcast matrix. Native execution reuses owned TFE
+  `Mul`, `Sub`, and `RealDiv` operations with the existing context/device/RAII
+  checks.
+- Generalize `tf.reduce_mean` and `tf.reduce_sum` to literal axis 0 or 1,
+  keyword or exactly aligned positional axis metadata, with named literal
+  `keepdims=True/False`. Add positional axis 0/1 ArgMax while retaining
+  default int64 output; positional Softmax axis 1 is accepted, while axis 0
+  remains explicit fallback because raw TFE Softmax is last-axis-only and
+  transpose is outside scope.
+- Add analyzer-driven canonical import-alias coverage, forged positional-axis
+  and keyword-type claim/lower guards, and a real-Cargo vertical slice spanning
+  the new unary, binary, reduction, classification, CPU residency, error,
+  special-value, no-host-resolve, and lifetime behavior.
+- Record `tf.nn.bias_add` as an explicit NO-GO/fallback until the exact TFE
+  `data_format` attribute symbol/provenance and cross-profile semantics are
+  separately certified.
 - Add `tf.nn.tanh(x)` for one positional float32 CPU rank-2 tensor with no
   keywords. The owned TFE `Tanh` operation reuses the existing same-wheel,
   RAII, eager-context, and float32 rank-2 result validation path.

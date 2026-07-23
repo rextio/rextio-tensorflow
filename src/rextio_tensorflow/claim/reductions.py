@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from rextio.plugins.api import Claimed, ClaimResult, ClaimSite, NotCovered
+from rextio.plugins.api import Claimed, ClaimResult, ClaimSite, KeywordArg, NotCovered
 
 from rextio_tensorflow.diagnostics import (
     DIAGNOSTIC_MEAN,
@@ -36,14 +36,14 @@ SUM_TARGETS = frozenset(
 )
 
 
-def _keyword_map(site: ClaimSite) -> dict[str, object] | None:
-    values: dict[str, object] = {}
+def _keyword_map(site: ClaimSite) -> dict[str, KeywordArg] | None:
+    values: dict[str, KeywordArg] = {}
     for keyword in site.keywords:
         if not keyword.literal.is_literal:
             return None
         if keyword.name in values:
             return None
-        values[keyword.name] = keyword.literal.value
+        values[keyword.name] = keyword
     return values
 
 
@@ -75,7 +75,15 @@ def _axis_and_keepdims(
                 f"{operation} requires a literal axis=0 or axis=1",
                 f"Write tf.{operation}(x, axis=0) or tf.{operation}(x, axis=1).",
             )
-        axis_value = keywords["axis"]
+        axis_keyword = keywords["axis"]
+        if axis_keyword.arg_type != "int":
+            return reject(
+                site,
+                diagnostic,
+                f"{operation} axis metadata must have arg_type='int'",
+                "Use a literal integer axis 0 or 1.",
+            )
+        axis_value = axis_keyword.literal.value
     elif len(operands) == 2:
         if "axis" in keywords:
             return reject(
@@ -121,8 +129,12 @@ def _axis_and_keepdims(
             f"bounded {operation} requires axis=0 or axis=1 literal; got axis={axis_value!r}",
             "Use literal axis 0 or 1.",
         )
-    keepdims = keywords.get("keepdims", False)
-    if not isinstance(keepdims, bool):
+    keepdims_keyword = keywords.get("keepdims")
+    keepdims = False if keepdims_keyword is None else keepdims_keyword.literal.value
+    if (
+        keepdims_keyword is not None
+        and keepdims_keyword.arg_type != "bool"
+    ) or not isinstance(keepdims, bool):
         return reject(
             site,
             diagnostic,
