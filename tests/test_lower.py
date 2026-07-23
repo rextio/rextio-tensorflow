@@ -356,22 +356,12 @@ def test_lower_maximum_minimum_revalidates_same_rank_metadata(
         PLUGIN.lower(replace(claimed, result_type=TENSOR_I64_CPU_1D), ctx)
 
 
-def test_maximum_minimum_runtime_checks_exact_shape_before_building_tfe_op() -> None:
+def test_maximum_minimum_runtime_delegates_same_rank_broadcast_to_tfe() -> None:
     helper = runtime_module_helpers()
-    shape_check = helper.index("ensure_exact_same_shape(left, right)?;")
-    maximum_op = helper.index(
-        'binary_same_shape(left, right, "Maximum", expected_rank)'
-    )
-    minimum_op = helper.index(
-        'binary_same_shape(left, right, "Minimum", expected_rank)'
-    )
-    op_construction = helper.index(
-        "let op = OwnedOp::new(Rc::clone(&context), op_name, &status)?;",
-        shape_check,
-    )
-    assert shape_check < op_construction
-    assert maximum_op > op_construction
-    assert minimum_op > op_construction
+    assert 'binary(left, right, "Maximum", false, expected_rank)' in helper
+    assert 'binary(left, right, "Minimum", false, expected_rank)' in helper
+    assert "ensure_exact_same_shape" not in helper
+    assert "tensor shape mismatch" not in helper
 
 
 @pytest.mark.parametrize("explicit_nhwc", (False, True))

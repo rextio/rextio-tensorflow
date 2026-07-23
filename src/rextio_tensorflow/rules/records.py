@@ -256,17 +256,17 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         ),
         constraint=(
             "Exactly two positional non-literal plugin tensor operands and no "
-            "keywords. Both annotations must have the same rank. Before "
-            "constructing the owned same-wheel TFE Maximum operation, the "
-            "runtime checks every concrete dimension for exact shape equality; "
-            "broadcasting, scalars, aliases, and tensorflow.math/raw_ops forms "
+            "keywords. Both annotations must have the same rank. The owned "
+            "same-wheel TFE Maximum operation supplies TensorFlow's same-rank "
+            "broadcasting, incompatible-shape errors, and special-value "
+            "semantics. Scalars, aliases, and tensorflow.math/raw_ops forms "
             "are excluded."
         ),
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-032",
         guidance=(
             "Call tf.maximum(x, y) with two TensorF32Cpu1D tensors or two "
-            "TensorF32Cpu2D tensors having exactly equal concrete shapes."
+            "TensorF32Cpu2D tensors having TensorFlow-compatible shapes."
         ),
         stability="experimental",
         verified=True,
@@ -283,17 +283,17 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         ),
         constraint=(
             "Exactly two positional non-literal plugin tensor operands and no "
-            "keywords. Both annotations must have the same rank. Before "
-            "constructing the owned same-wheel TFE Minimum operation, the "
-            "runtime checks every concrete dimension for exact shape equality; "
-            "broadcasting, scalars, aliases, and tensorflow.math/raw_ops forms "
+            "keywords. Both annotations must have the same rank. The owned "
+            "same-wheel TFE Minimum operation supplies TensorFlow's same-rank "
+            "broadcasting, incompatible-shape errors, and special-value "
+            "semantics. Scalars, aliases, and tensorflow.math/raw_ops forms "
             "are excluded."
         ),
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-033",
         guidance=(
             "Call tf.minimum(x, y) with two TensorF32Cpu1D tensors or two "
-            "TensorF32Cpu2D tensors having exactly equal concrete shapes."
+            "TensorF32Cpu2D tensors having TensorFlow-compatible shapes."
         ),
         stability="experimental",
         verified=True,

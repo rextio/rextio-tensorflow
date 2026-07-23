@@ -39,10 +39,10 @@ Changelog and Semantic Versioning conventions.
   `TFE_OpSetAttrString` from the exact owning TensorFlow 2.21 image, sets NHWC
   explicitly, and preserves existing context/device/RAII/error boundaries.
 - Add exact top-level `tf.maximum` / `tf.minimum` for two float32 CPU tensors
-  of equal rank 1 or equal rank 2. The runtime compares every concrete
-  dimension before constructing the owned TFE `Maximum` / `Minimum` op, so
-  broadcasting and unequal same-rank shapes fail closed. Real-Cargo coverage
-  compares finite values, NaN/Inf classes, and signed-zero bits with eager
+  of equal rank 1 or equal rank 2. Owned TFE `Maximum` / `Minimum` execution
+  preserves TensorFlow's same-rank broadcasting and incompatible-shape
+  behavior. Real-Cargo coverage compares finite values, broadcasting,
+  incompatible shapes, NaN/Inf classes, and signed-zero bits with eager
   TensorFlow on each native CI platform.
 - Add `tf.nn.tanh(x)` for one positional float32 CPU rank-2 tensor with no
   keywords. The owned TFE `Tanh` operation reuses the existing same-wheel,

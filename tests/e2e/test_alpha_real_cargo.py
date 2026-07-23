@@ -812,7 +812,7 @@ def test_multiply_real_cargo(project: CertifiedProject) -> None:
 
 
 def test_maximum_minimum_real_cargo(project: CertifiedProject) -> None:
-    """Certify exact-shape Maximum/Minimum and eager-relative IEEE behavior."""
+    """Certify same-rank broadcasting, errors, and eager-relative IEEE behavior."""
     tf = _import_tf()
     expected_routes = {
         "tf_app.kernels.maximum_1d":
@@ -836,19 +836,14 @@ def test_maximum_minimum_real_cargo(project: CertifiedProject) -> None:
         / "src"
         / "lib.rs"
     ).read_text(encoding="utf-8")
-    shape_gate = rust.index("ensure_exact_same_shape(left, right)?;")
-    op_construction = rust.index(
-        "let op = OwnedOp::new(Rc::clone(&context), op_name, &status)?;",
-        shape_gate,
-    )
-    assert shape_gate < op_construction
-    assert 'binary_same_shape(left, right, "Maximum", expected_rank)' in rust
-    assert 'binary_same_shape(left, right, "Minimum", expected_rank)' in rust
+    assert 'binary(left, right, "Maximum", false, expected_rank)' in rust
+    assert 'binary(left, right, "Minimum", false, expected_rank)' in rust
+    assert "ensure_exact_same_shape" not in rust
 
     vector_left = tf.constant([-3.0, 2.0, 8.0], dtype=tf.float32)
-    vector_right = tf.constant([1.0, 4.0, -2.0], dtype=tf.float32)
+    vector_right = tf.constant([1.0], dtype=tf.float32)
     matrix_left = tf.constant([[1.0, -2.0], [3.0, 4.0]], dtype=tf.float32)
-    matrix_right = tf.constant([[0.5, -3.0], [5.0, 2.0]], dtype=tf.float32)
+    matrix_right = tf.constant([[0.5], [5.0]], dtype=tf.float32)
     cases = (
         (
             "tf_app.kernels.maximum_1d",
@@ -889,15 +884,24 @@ def test_maximum_minimum_real_cargo(project: CertifiedProject) -> None:
             tf.stack((special_left, special_right)),
             tf.stack((special_right, special_left)),
         )
-        with pytest.raises(Exception, match="tensor shape mismatch"):
+        incompatible_vector = tf.constant([1.0, 2.0], dtype=tf.float32)
+        with pytest.raises(Exception):
+            tf.maximum(vector_left, incompatible_vector)
+        with pytest.raises(Exception):
             maximum_1d(
                 vector_left,
-                tf.constant([1.0, 2.0], dtype=tf.float32),
+                incompatible_vector,
             )
-        with pytest.raises(Exception, match="tensor shape mismatch"):
+        incompatible_matrix = tf.constant(
+            [[1.0], [2.0], [3.0]],
+            dtype=tf.float32,
+        )
+        with pytest.raises(Exception):
+            tf.minimum(matrix_left, incompatible_matrix)
+        with pytest.raises(Exception):
             minimum_2d(
                 matrix_left,
-                tf.constant([[1.0], [2.0]], dtype=tf.float32),
+                incompatible_matrix,
             )
 
     assert _float_special_values_equal(

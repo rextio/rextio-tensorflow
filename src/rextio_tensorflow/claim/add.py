@@ -306,7 +306,7 @@ def _claim_same_rank_operands(
             site,
             diagnostic,
             f"unsupported {operation} operand pair {operands!r}",
-            "Use two rank-1 tensors or two rank-2 tensors with exactly equal shapes.",
+            "Use two rank-1 tensors or two rank-2 tensors with compatible shapes.",
         )
     return Claimed(rule_id=rule_id, result_type=result)
 
