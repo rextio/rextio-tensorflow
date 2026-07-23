@@ -468,7 +468,9 @@ def test_reduce_sum_axis1_real_cargo(project: CertifiedProject) -> None:
         encoding="utf-8"
     )
     assert "rextio_tensorflow_runtime::reduce_sum_axis1" in rust
-    assert 'OwnedOp::new(Rc::clone(&context), "Sum", &status)' in rust
+    assert "fn reduce_axis1(input: &RxtTfTensor, op_name: &str)" in rust
+    assert "OwnedOp::new(Rc::clone(&context), op_name, &status)" in rust
+    assert 'reduce_axis1(input, "Sum")' in rust
     assert "TFE_NewTensorHandle(reduction axis)" in rust
 
     regular = tf.constant([[1.5, -2.0, 3.0], [-4.0, 0.5, 1.0]], dtype=tf.float32)
