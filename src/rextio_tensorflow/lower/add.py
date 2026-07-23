@@ -137,13 +137,13 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
             f"rextio-tensorflow {operation} lower requires resolved operand types"
         )
     pair = (left, right)
-    exact_shape_operation = expected_rule in {
+    same_rank_operation = expected_rule in {
         MAXIMUM_CALL_RULE,
         MINIMUM_CALL_RULE,
     }
     expected = (
         _SAME_RANK_SUPPORTED.get(pair)
-        if exact_shape_operation
+        if same_rank_operation
         else _SUPPORTED.get(pair)
     )
     if expected is None or claimed.result_type != expected:
@@ -151,7 +151,7 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
             f"rextio-tensorflow {operation} lower operand/result types changed between claim and lower: "
             f"operands={claimed.operand_types!r} result={claimed.result_type!r}"
         )
-    if exact_shape_operation and claimed.operand_literals and (
+    if same_rank_operation and claimed.operand_literals and (
         len(claimed.operand_literals) != 2
         or any(literal.is_literal for literal in claimed.operand_literals)
     ):
