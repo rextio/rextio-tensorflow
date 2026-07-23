@@ -182,7 +182,7 @@ same constraints and fails with `ValueError` (not `assert`).
 | Reduce sum | `tf.reduce_sum` / `tf.math.reduce_sum` | **2** | literal `axis=0\|1`, keyword or positional; named literal `keepdims=True\|False` or omitted | **1 or 2** | legacy axis-1 rule or `rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d` | `RXTP-TENSORFLOW-011` / `023` |
 | Softmax | `tf.nn.softmax` | **1 or 2** | rank 1: omitted or literal `axis=0`; rank 2: explicit literal `axis=1`; literal axes may be keyword or positional | preserves float32 rank | `rextio-tensorflow/softmax-axis{0-f32-cpu-1d,1-f32-cpu-2d}` | `RXTP-TENSORFLOW-025` / `007` |
 | ArgMax | `tf.argmax` | **2** float32 | explicit literal `axis=0\|1`, keyword or positional; default output type only | **1** int64 | `rextio-tensorflow/argmax-axis{0,1}-i64-cpu-2d` | `RXTP-TENSORFLOW-024` / `008` |
-| Bias add | `tf.nn.bias_add` | n/a | **not claimed** | Python fallback | `rextio-tensorflow/bias-add-unproven-fallback` | `RXTP-TENSORFLOW-021` |
+| Bias add | `tf.nn.bias_add` | rank-2 value + rank-1 bias | data format omitted or named literal `NHWC`; tensor operands positional | **2** float32 | `rextio-tensorflow/bias-add-nhwc-f32-cpu-2d` | `RXTP-TENSORFLOW-021` |
 
 ### Elementwise operand pairs (add, multiply, subtract, and divide)
 
@@ -247,6 +247,7 @@ Lowering emits calls into the exact generated module
 | tanh | `rextio_tensorflow_runtime::tanh(&x)?` |
 | abs / negative / square / exp / log / sqrt | `rextio_tensorflow_runtime::{abs,negative,square,exp,log,sqrt}(&x)?` |
 | add / `+` | `rextio_tensorflow_runtime::add(&a, &b)?` |
+| bias add (NHWC) | `rextio_tensorflow_runtime::bias_add(&value, &bias)?` |
 | multiply / `*` | `rextio_tensorflow_runtime::mul(&a, &b)?` |
 | subtract / `-` | `rextio_tensorflow_runtime::sub(&a, &b)?` |
 | divide / `/` | `rextio_tensorflow_runtime::div(&a, &b)?` |
@@ -292,9 +293,10 @@ All of the following are required for a site to be **Claimed** and lowered:
    last-axis-only and transpose is excluded. ArgMax accepts explicit literal
    axis 0 or 1 and retains default int64 output. Neither accepts `keepdims`;
    extra/output-type keywords are rejected.
-9. **BiasAdd remains fallback** — exact TFE `data_format` attribute symbol,
-   provenance, broadcasting, error, dtype, and device semantics are not
-   certified by this bounded wave.
+9. **BiasAdd** — value is rank-2 float32 CPU, bias is rank-1 float32 CPU, both
+   are positional and ordered value-then-bias. `data_format` is omitted or
+   named literal `NHWC`; NCHW, dynamic/positional format, `name`, keyword
+   tensor operands, and other rank orders are rejected.
 10. **No dynamic axis/dtype/rank proof** — only the fixed Alpha vocabulary.
 11. **Inference-oriented slice** — not training/`GradientTape`, graph/Session,
    `tf.function`/AutoGraph, or non-`CPU:0` execution.
@@ -311,7 +313,7 @@ Anything outside the tables above is either:
 | Outcome | Meaning | Typical cases |
 | --- | --- | --- |
 | **`NotCovered`** | Plugin declines; site may stay on ordinary Python fallback | Unknown symbols (`tf.cos`, …); method receivers on covered targets; untyped (`None`) operands |
-| **`Rejected`** | Recognized shape but not lowerable; diagnostic + Python fallback | Wrong ranks; keywords on unary/binary calls; missing/dynamic/forged axis metadata; positional keepdims; non-plugin tensor types; `tf.nn.bias_add` pending proof |
+| **`Rejected`** | Recognized shape but not lowerable; diagnostic + Python fallback | Wrong ranks; keywords on unary/binary calls; missing/dynamic/forged metadata; positional keepdims; non-plugin tensor types; unsupported BiasAdd format/forms |
 
 ### Explicit exclusions (not Alpha-supported)
 
@@ -328,7 +330,8 @@ Anything outside the tables above is either:
   `tf.argmax(output_type=...)`
 - Matmul transpose / other keywords
 - In-place ops; scalar operands; inferred aliases such as `tf.math.truediv`;
-  `tf.nn.bias_add` pending its separate TFE `data_format` proof
+  `tf.maximum` / `tf.minimum` pending a complete broadcast and special-value
+  platform matrix
 - Host resolve (`TFE_TensorHandleResolve`) on the inference path
 - DLPack
 - `TFE_NewContext` / second eager context / Session
@@ -427,6 +430,8 @@ Also accepted (when types match the tables):
 - rank-1/rank-2 `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`,
   `tf.math.log`, and `tf.math.sqrt`
 - rank-1 `tf.nn.softmax(x)` and `tf.nn.softmax(x, axis=0)`
+- `tf.nn.bias_add(matrix, bias)` and the explicit
+  `data_format="NHWC"` form
 - `tf.reduce_mean(x, 0, keepdims=True)` and
   `tf.reduce_sum(x, axis=1, keepdims=False)`
 - `tf.argmax(x, 0)`; rank-2 Softmax remains explicit axis 1 only
@@ -448,7 +453,8 @@ sigmoid; tensor-dependent control flow remains unsupported.
 | rank-2 `tf.nn.softmax(x)` / `tf.nn.softmax(x, axis=0)` | `Rejected` |
 | rank-1 `tf.nn.softmax(x, axis=1)` | `Rejected` |
 | `tf.argmax(x, axis=1, output_type=tf.int32)` | `Rejected` |
-| `tf.nn.bias_add(x, bias)` | `Rejected` / explicit Python fallback pending TFE proof |
+| `tf.nn.bias_add(x, bias, data_format="NCHW")` | `Rejected` |
+| `tf.maximum(x, bias)` / `tf.minimum(x, bias)` | `NotCovered` pending complete semantic certification |
 | `tf.cos(x)` | `NotCovered` |
 | Method-style receiver on a covered call | `NotCovered` |
 | Operand types outside plugin vocabulary on a covered symbol | `Rejected` (`RXTP-TENSORFLOW-010` / op diagnostic) |
@@ -555,10 +561,10 @@ experimental pending a separate support-promotion decision. The original
 vertical slice remains rank-2 matmul → rank-2 activations → scalar Rust
 control flow → broadcast add → classification. The 0.1.2 follow-up adds a
 real-Cargo slice spanning rank-1 relu/sigmoid/tanh → functional multiply →
-rank-1 Softmax default/axis 0 → Abs/Neg/Square/Exp/Log/Sqrt → subtraction →
-reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions → ArgMax axis 0,
-with CPU, NaN/Inf/domain/signed-zero, error, no-host-resolve, and lifetime
-checks. The Linux
+rank-1 Softmax default/axis 0 → Abs/Neg/Square/Exp/Log/Sqrt → NHWC BiasAdd →
+subtraction → reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions →
+ArgMax axis 0, with CPU, NaN/Inf/domain/signed-zero, shape-error,
+no-host-resolve, provenance, and lifetime checks. The Linux
 probe is opt-in and does not claim certification when it has not been run.
 
 ---

@@ -29,6 +29,7 @@ SUB_CALL_RULE = "rextio-tensorflow/sub-call-f32-cpu"
 SUB_BINOP_RULE = "rextio-tensorflow/sub-binop-f32-cpu"
 DIV_CALL_RULE = "rextio-tensorflow/div-call-f32-cpu"
 DIV_BINOP_RULE = "rextio-tensorflow/div-binop-f32-cpu"
+BIAS_ADD_RULE = "rextio-tensorflow/bias-add-nhwc-f32-cpu-2d"
 # Back-compat alias used by older tests / docs references.
 ADD_RULE = ADD_CALL_RULE
 ADD_TARGETS = frozenset(
@@ -73,6 +74,77 @@ _SUPPORTED_PAIRS: dict[tuple[str, str], str] = {
 }
 
 
+def _claim_bias_add(site: ClaimSite) -> ClaimResult:
+    if site.receiver is not None:
+        return NotCovered()
+    if len(site.operand_types) != 2:
+        return reject(
+            site,
+            DIAGNOSTIC_BIAS_ADD,
+            "bounded bias_add requires value and bias as two positional tensors",
+            "Call tf.nn.bias_add(value, bias) with rank-2 value and rank-1 bias.",
+        )
+    if site.operand_literals and (
+        len(site.operand_literals) != 2
+        or any(literal.is_literal for literal in site.operand_literals)
+    ):
+        return reject(
+            site,
+            DIAGNOSTIC_BIAS_ADD,
+            "bias_add received forged positional literal metadata",
+            "Pass value and bias as positional tensors.",
+        )
+    keywords = {keyword.name: keyword for keyword in site.keywords}
+    if len(keywords) != len(site.keywords):
+        return reject(
+            site,
+            DIAGNOSTIC_BIAS_ADD,
+            "bias_add received duplicate keyword metadata",
+            "Omit data_format or pass data_format='NHWC' exactly once.",
+        )
+    if keywords:
+        if set(keywords) != {"data_format"}:
+            return reject(
+                site,
+                DIAGNOSTIC_BIAS_ADD,
+                "bounded bias_add accepts only the literal data_format='NHWC' option",
+                "Do not pass name or tensor operands by keyword.",
+            )
+        data_format = keywords["data_format"]
+        if (
+            data_format.arg_type != "str"
+            or not data_format.literal.is_literal
+            or data_format.literal.value != "NHWC"
+        ):
+            return reject(
+                site,
+                DIAGNOSTIC_BIAS_ADD,
+                "bounded bias_add requires static literal data_format='NHWC'",
+                "Omit data_format or write data_format='NHWC'.",
+            )
+    value_type, bias_type = site.operand_types
+    if value_type is None or bias_type is None:
+        return NotCovered()
+    if not is_tensor_type(value_type) or not is_tensor_type(bias_type):
+        return reject(
+            site,
+            DIAGNOSTIC_UNSUPPORTED,
+            "bias_add operand types are outside the float32 CPU tensor surface",
+            "Annotate value as TensorF32Cpu2D and bias as TensorF32Cpu1D.",
+        )
+    if (value_type, bias_type) != (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D):
+        return reject(
+            site,
+            DIAGNOSTIC_BIAS_ADD,
+            (
+                "bounded NHWC bias_add requires rank-2 float32 CPU value followed "
+                f"by rank-1 float32 CPU bias; got {site.operand_types!r}"
+            ),
+            "Use TensorF32Cpu2D value and TensorF32Cpu1D bias in that order.",
+        )
+    return Claimed(rule_id=BIAS_ADD_RULE, result_type=TENSOR_F32_CPU_2D)
+
+
 def try_claim(site: ClaimSite) -> ClaimResult | None:
     """Claim exact bounded binary spellings on the float32 CPU surface."""
     binops = {
@@ -94,17 +166,7 @@ def try_claim(site: ClaimSite) -> ClaimResult | None:
     if site.kind != "call":
         return None
     if site.target in BIAS_ADD_TARGETS:
-        if site.receiver is not None:
-            return NotCovered()
-        return reject(
-            site,
-            DIAGNOSTIC_BIAS_ADD,
-            (
-                "tf.nn.bias_add remains fallback until its exact TFE data_format "
-                "attribute, symbol provenance, and error semantics are certified"
-            ),
-            "Use an already-supported explicit add spelling or keep tf.nn.bias_add on Python.",
-        )
+        return _claim_bias_add(site)
     calls = {
         **{
             target: (
@@ -207,6 +269,7 @@ __all__ = [
     "ADD_CALL_RULE",
     "ADD_RULE",
     "ADD_TARGETS",
+    "BIAS_ADD_RULE",
     "BIAS_ADD_TARGETS",
     "DIV_BINOP_RULE",
     "DIV_CALL_RULE",

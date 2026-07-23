@@ -425,6 +425,8 @@ mod rextio_tensorflow_runtime {
             unsafe extern "C" fn(*mut TfeOp, *mut TfeTensorHandle, *mut TfStatus),
         tfe_op_set_attr_type: unsafe extern "C" fn(*mut TfeOp, *const c_char, c_int),
         tfe_op_set_attr_bool: unsafe extern "C" fn(*mut TfeOp, *const c_char, u8),
+        tfe_op_set_attr_string:
+            unsafe extern "C" fn(*mut TfeOp, *const c_char, *const c_void, usize),
         tfe_execute: unsafe extern "C" fn(
             *mut TfeOp,
             *mut *mut TfeTensorHandle,
@@ -522,6 +524,7 @@ mod rextio_tensorflow_runtime {
                     tfe_op_add_input: cc.resolve("TFE_OpAddInput")?,
                     tfe_op_set_attr_type: cc.resolve("TFE_OpSetAttrType")?,
                     tfe_op_set_attr_bool: cc.resolve("TFE_OpSetAttrBool")?,
+                    tfe_op_set_attr_string: cc.resolve("TFE_OpSetAttrString")?,
                     tfe_execute: cc.resolve("TFE_Execute")?,
 
                     eager_tensor_handle: pywrap.resolve(SYM_EAGER_TENSOR_HANDLE)?,
@@ -1013,6 +1016,20 @@ mod rextio_tensorflow_runtime {
             Ok(())
         }
 
+        fn set_string(&self, name: &str, value: &str) -> PyResult<()> {
+            let c_name = c_string(name, "TensorFlow string attribute")?;
+            let bytes = value.as_bytes();
+            unsafe {
+                (self.api.tfe_op_set_attr_string)(
+                    self.raw,
+                    c_name.as_ptr(),
+                    bytes.as_ptr().cast(),
+                    bytes.len(),
+                )
+            };
+            Ok(())
+        }
+
         fn execute_one(&self, status: &OwnedStatus) -> PyResult<PendingHandle> {
             let mut output = std::ptr::null_mut();
             let mut output_count: c_int = 1;
@@ -1221,6 +1238,36 @@ mod rextio_tensorflow_runtime {
                 1
             };
             binary(left, right, "AddV2", false, expected_rank)
+        })
+    }
+
+    pub fn bias_add(
+        value: &RxtTfTensor,
+        bias: &RxtTfTensor,
+    ) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            value.validate_f32(2)?;
+            bias.validate_f32(1)?;
+            same_context(value, bias)?;
+            let value_device = value.backing_device()?;
+            let bias_device = bias.backing_device()?;
+            if value_device != bias_device {
+                return Err(value_error(format!(
+                    "tensor device mismatch: {value_device} vs {bias_device}"
+                )));
+            }
+            let status = OwnedStatus::new(value.inner.api)?;
+            let context = value.context();
+            let op = OwnedOp::new(Rc::clone(&context), "BiasAdd", &status)?;
+            op.set_device(&value_device, &status)?;
+            op.add_input(value.pointer(), &status)?;
+            op.add_input(bias.pointer(), &status)?;
+            op.set_type("T", TF_FLOAT)?;
+            op.set_string("data_format", "NHWC")?;
+            let result =
+                RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
+            result.validate_f32(2)?;
+            Ok(result)
         })
     }
 

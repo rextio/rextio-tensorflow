@@ -25,6 +25,7 @@ from rextio_tensorflow.claim.activations import (
 from rextio_tensorflow.claim.add import (
     ADD_BINOP_RULE,
     ADD_CALL_RULE,
+    BIAS_ADD_RULE,
     DIV_BINOP_RULE,
     DIV_CALL_RULE,
     MUL_BINOP_RULE,
@@ -211,6 +212,25 @@ def test_math_unary_unlisted_aliases_are_not_covered(target: str) -> None:
     assert isinstance(result, NotCovered)
 
 
+@pytest.mark.parametrize(
+    "target",
+    (
+        "tensorflow.maximum",
+        "tf.maximum",
+        "tensorflow.minimum",
+        "tf.minimum",
+    ),
+)
+def test_maximum_minimum_remain_unclaimed_without_full_semantic_matrix(
+    target: str,
+) -> None:
+    result = PLUGIN.claim(
+        _call(target, (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D)),
+        CONFIG,
+    )
+    assert isinstance(result, NotCovered)
+
+
 def test_claims_add_rank2_bias() -> None:
     result = PLUGIN.claim(
         _call("tensorflow.add", (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D)),
@@ -338,12 +358,120 @@ def test_binary_surface_rejects_scalars_keywords_and_unlisted_aliases() -> None:
         assert isinstance(result, NotCovered)
 
 
-def test_bias_add_is_explicitly_rejected_until_tfe_contract_is_proven() -> None:
-    for target in ("tensorflow.nn.bias_add", "tf.nn.bias_add"):
-        result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D)), CONFIG)
-        assert isinstance(result, Rejected)
-        assert result.diagnostic.code == "RXTP-TENSORFLOW-021"
-        assert "data_format" in result.diagnostic.message
+@pytest.mark.parametrize("target", ("tensorflow.nn.bias_add", "tf.nn.bias_add"))
+@pytest.mark.parametrize("explicit_nhwc", (False, True))
+def test_claims_bounded_nhwc_bias_add(
+    target: str,
+    explicit_nhwc: bool,
+) -> None:
+    keywords = (
+        (
+            KeywordArg(
+                name="data_format",
+                arg_type="str",
+                literal=ClaimLiteral(is_literal=True, value="NHWC"),
+            ),
+        )
+        if explicit_nhwc
+        else ()
+    )
+    result = PLUGIN.claim(
+        _call(
+            target,
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert result == Claimed(
+        rule_id=BIAS_ADD_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+    )
+
+
+@pytest.mark.parametrize(
+    ("operand_types", "operand_literals", "keywords"),
+    (
+        ((TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D), (), ()),
+        ((TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D), (), ()),
+        (
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            (),
+            (
+                KeywordArg(
+                    name="data_format",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="NCHW"),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            (),
+            (
+                KeywordArg(
+                    name="data_format",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=False),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            (),
+            (
+                KeywordArg(
+                    name="name",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="bias"),
+                ),
+            ),
+        ),
+        (
+            (),
+            (),
+            (
+                KeywordArg(
+                    name="value",
+                    arg_type=TENSOR_F32_CPU_2D,
+                    literal=ClaimLiteral(is_literal=False),
+                ),
+                KeywordArg(
+                    name="bias",
+                    arg_type=TENSOR_F32_CPU_1D,
+                    literal=ClaimLiteral(is_literal=False),
+                ),
+            ),
+        ),
+        (
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+            (
+                ClaimLiteral(is_literal=False),
+                ClaimLiteral(is_literal=True, value=1),
+            ),
+            (),
+        ),
+    ),
+)
+def test_bias_add_near_misses_fail_closed(
+    operand_types: tuple[str | None, ...],
+    operand_literals: tuple[ClaimLiteral, ...],
+    keywords: tuple[KeywordArg, ...],
+) -> None:
+    result = PLUGIN.claim(
+        _call(
+            "tensorflow.nn.bias_add",
+            operand_types,
+            operand_literals=operand_literals,
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert isinstance(result, Rejected)
+    assert result.diagnostic.code in {
+        "RXTP-TENSORFLOW-010",
+        "RXTP-TENSORFLOW-021",
+    }
 
 
 def test_binop_add_rejection_uses_binop_diagnostic_authority() -> None:

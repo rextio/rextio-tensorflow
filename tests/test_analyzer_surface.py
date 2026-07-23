@@ -16,6 +16,7 @@ from rextio.plugins.loader import load_plugin_registry
 from rextio.targets.models import TargetSpec
 
 from rextio_tensorflow.claim.add import (
+    BIAS_ADD_RULE,
     DIV_CALL_RULE,
     MUL_CALL_RULE,
     SUB_CALL_RULE,
@@ -37,7 +38,7 @@ from rextio_tensorflow.claim.unary import (
     SQRT_RULE,
     SQUARE_RULE,
 )
-from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_1D
+from rextio_tensorflow.diagnostics import TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D
 from rextio_tensorflow.plugin import PLUGIN_ID, plugin
 
 SURFACE_SOURCE = """
@@ -156,10 +157,22 @@ def softmax_axis0_fallback(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
     return tf.nn.softmax(x, 0)
 
 
-def bias_add_fallback(
+def bias_add_default(
     x: TensorF32Cpu2D, bias: TensorF32Cpu1D
 ) -> TensorF32Cpu2D:
     return tf.nn.bias_add(x, bias)
+
+
+def bias_add_nhwc(
+    x: TensorF32Cpu2D, bias: TensorF32Cpu1D
+) -> TensorF32Cpu2D:
+    return tf.nn.bias_add(x, bias, data_format="NHWC")
+
+
+def bias_add_nchw_fallback(
+    x: TensorF32Cpu2D, bias: TensorF32Cpu1D
+) -> TensorF32Cpu2D:
+    return tf.nn.bias_add(x, bias, data_format="NCHW")
 """
 
 
@@ -322,7 +335,7 @@ def test_analyzer_preserves_positional_axis_literal_alignment(tmp_path: Path) ->
         "positional_keepdims_bool_is_not_offered",
         "softmax_axis0_fallback",
         "softmax_rank1_axis1_fallback",
-        "bias_add_fallback",
+        "bias_add_nchw_fallback",
     ):
         function = _function(analysis, name)
         assert not function.plugin_claims
@@ -356,6 +369,35 @@ def test_analyzer_positional_axes_lower_with_core_rendered_full_arity(
     assert "argmax_axis0(&x, " not in source
     assert "softmax_axis0(&x, " not in source
     assert "softmax_axis1(&x, " not in source
+
+
+def test_analyzer_claims_bounded_bias_add_forms(tmp_path: Path) -> None:
+    registry = _registry()
+    analysis = analyze_project(
+        _write_project(tmp_path),
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=RextioConfig(),
+    )
+    for name in ("bias_add_default", "bias_add_nhwc"):
+        function = _function(analysis, name)
+        assert function.accepted is True
+        assert function.route == f"native-plugin:{PLUGIN_ID}"
+        assert len(function.plugin_claims) == 1
+        claim = function.plugin_claims[0]
+        assert claim.rule_id == BIAS_ADD_RULE
+        assert claim.operand_types == (
+            TENSOR_F32_CPU_2D,
+            TENSOR_F32_CPU_1D,
+        )
+
+    type_maps, providers, by_key = _lowering_inputs(registry)
+    source = generate_rust_module(
+        lower_project(analysis, plugin_types=type_maps),
+        plugin_providers=providers,
+        plugin_types_by_key=by_key,
+    )
+    assert "rextio_tensorflow_runtime::bias_add(&x, &bias)?" in source
 
 
 def test_analyzer_claims_rank1_softmax_default_and_keyword_axis(

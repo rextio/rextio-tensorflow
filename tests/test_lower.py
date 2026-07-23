@@ -25,6 +25,8 @@ from rextio_tensorflow.claim.activations import (
 )
 from rextio_tensorflow.claim.add import (
     ADD_BINOP_RULE,
+    ADD_CALL_RULE,
+    BIAS_ADD_RULE,
     DIV_BINOP_RULE,
     DIV_CALL_RULE,
     MUL_BINOP_RULE,
@@ -303,6 +305,118 @@ def test_lower_add_binop() -> None:
     )
     lowered = PLUGIN.lower(claimed, ctx)
     assert lowered.rust == "rextio_tensorflow_runtime::add(&x, &b)?"
+
+
+@pytest.mark.parametrize("explicit_nhwc", (False, True))
+def test_lower_bounded_nhwc_bias_add(explicit_nhwc: bool) -> None:
+    keywords = (
+        (
+            KeywordArg(
+                name="data_format",
+                arg_type="str",
+                literal=ClaimLiteral(is_literal=True, value="NHWC"),
+            ),
+        )
+        if explicit_nhwc
+        else ()
+    )
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.nn.bias_add",
+        operand_types=(TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+        operand_literals=(
+            ClaimLiteral(is_literal=False),
+            ClaimLiteral(is_literal=False),
+        ),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=BIAS_ADD_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+        keywords=keywords,
+    )
+    lowered = PLUGIN.lower(
+        claimed,
+        LoweringContext(
+            operands=("value", "bias"),
+            target_language="rust",
+            fresh_name=_fresh_name,
+        ),
+    )
+    assert lowered.rust == "rextio_tensorflow_runtime::bias_add(&value, &bias)?"
+    helper = runtime_module_helpers()
+    assert 'cc.resolve("TFE_OpSetAttrString")' in helper
+    assert 'op.set_string("data_format", "NHWC")?' in helper
+    assert "RTLD_DEFAULT" not in helper
+
+
+@pytest.mark.parametrize(
+    ("mutations", "message"),
+    (
+        ({"rule_id": ADD_CALL_RULE}, "malformed bias_add"),
+        ({"result_type": TENSOR_F32_CPU_1D}, "malformed bias_add"),
+        (
+            {"operand_types": (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D)},
+            "malformed bias_add",
+        ),
+        (
+            {
+                "keywords": (
+                    KeywordArg(
+                        name="data_format",
+                        arg_type="str",
+                        literal=ClaimLiteral(is_literal=True, value="NCHW"),
+                    ),
+                )
+            },
+            "literal data_format='NHWC'",
+        ),
+        (
+            {
+                "keywords": (
+                    KeywordArg(
+                        name="name",
+                        arg_type="str",
+                        literal=ClaimLiteral(is_literal=True, value="bias"),
+                    ),
+                )
+            },
+            "accepts only data_format",
+        ),
+        (
+            {
+                "operand_literals": (
+                    ClaimLiteral(is_literal=False),
+                    ClaimLiteral(is_literal=True, value=1),
+                )
+            },
+            "forged positional literal metadata",
+        ),
+    ),
+)
+def test_bias_add_lower_rejects_forged_metadata(
+    mutations: dict[str, object],
+    message: str,
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.nn.bias_add",
+        operand_types=(TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=BIAS_ADD_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+    )
+    with pytest.raises(ValueError, match=message):
+        PLUGIN.lower(
+            replace(claimed, **mutations),
+            LoweringContext(
+                operands=("value", "bias"),
+                target_language="rust",
+                fresh_name=_fresh_name,
+            ),
+        )
 
 
 @pytest.mark.parametrize(

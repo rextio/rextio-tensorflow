@@ -607,25 +607,31 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
-        id="rextio-tensorflow/bias-add-unproven-fallback",
+        id="rextio-tensorflow/bias-add-nhwc-f32-cpu-2d",
         provider="rextio-tensorflow",
         scope=RuleScope(
             kind="call",
-            pattern="tf.nn.bias_add on TensorFlow tensors",
+            pattern=(
+                "tf.nn.bias_add on rank-2 float32 CPU value plus rank-1 bias "
+                "with default/NHWC data format"
+            ),
         ),
         constraint=(
-            "Native claim is withheld until the exact TFE BiasAdd data_format "
-            "attribute, required public-symbol provenance, broadcasting, dtype, "
-            "device, and error semantics are certified on every native profile."
+            "Exactly two positional operands in value-then-bias order. value is "
+            "TensorF32Cpu2D, bias is TensorF32Cpu1D, and data_format is omitted "
+            "or the named static literal 'NHWC'. Generated Rust resolves "
+            "TFE_OpSetAttrString from the exact owning TensorFlow 2.21 image, "
+            "sets NHWC explicitly, and delegates last-dimension compatibility "
+            "and error semantics to the owned TFE BiasAdd operation."
         ),
-        outcome="fallback",
+        outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-021",
         guidance=(
-            "Keep tf.nn.bias_add on Python, or use an already-supported explicit "
-            "add spelling when its semantics are appropriate."
+            "Call tf.nn.bias_add(value, bias) with TensorF32Cpu2D value and "
+            "TensorF32Cpu1D bias; omit data_format or use data_format='NHWC'."
         ),
         stability="experimental",
-        verified=False,
+        verified=True,
     ),
     RuleRecord(
         id="rextio-tensorflow/unsupported-tensor-surface",
