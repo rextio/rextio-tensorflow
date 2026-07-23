@@ -124,6 +124,8 @@ def test_covers_alpha_surface() -> None:
     assert "tensorflow.math.subtract" in coverage.symbols
     assert "tensorflow.divide" in coverage.symbols
     assert "tensorflow.math.divide" in coverage.symbols
+    assert "tensorflow.maximum" in coverage.symbols
+    assert "tensorflow.minimum" in coverage.symbols
     assert "tensorflow.nn.bias_add" in coverage.symbols
     assert "tensorflow.reduce_mean" in coverage.symbols
     assert "tensorflow.reduce_sum" in coverage.symbols
@@ -147,6 +149,11 @@ def test_rule_records_are_namespaced_and_well_formed() -> None:
             codes.add(record.diagnostic_code)
     assert "RXTP-TENSORFLOW-001" in codes
     assert "RXTP-TENSORFLOW-010" in codes
+    assert "RXTP-TENSORFLOW-032" in codes
+    assert "RXTP-TENSORFLOW-033" in codes
+    record_ids = {record.id for record in records}
+    assert "rextio-tensorflow/maximum-call-f32-cpu" in record_ids
+    assert "rextio-tensorflow/minimum-call-f32-cpu" in record_ids
 
 
 def test_type_vocabulary_keys_and_boundary() -> None:

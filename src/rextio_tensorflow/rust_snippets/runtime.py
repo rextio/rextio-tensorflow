@@ -833,6 +833,29 @@ mod rextio_tensorflow_runtime {
             Ok(rank)
         }
 
+        fn concrete_shape(&self) -> PyResult<Vec<i64>> {
+            let rank = self.rank()?;
+            let status = OwnedStatus::new(self.inner.api)?;
+            let mut shape = Vec::with_capacity(rank.max(0) as usize);
+            for index in 0..rank {
+                let dimension = unsafe {
+                    (self.inner.api.tfe_tensor_handle_dim)(
+                        self.inner.raw,
+                        index,
+                        status.pointer(),
+                    )
+                };
+                status.check("TFE_TensorHandleDim")?;
+                if dimension < 0 {
+                    return Err(value_error(format!(
+                        "expected concrete eager dimensions, got dim[{index}]={dimension}"
+                    )));
+                }
+                shape.push(dimension);
+            }
+            Ok(shape)
+        }
+
         fn validate_typed(&self, expected_type: c_int, expected_rank: c_int) -> PyResult<()> {
             let actual_type = unsafe { (self.inner.api.tfe_tensor_handle_data_type)(self.inner.raw) };
             if actual_type != expected_type {
@@ -1226,6 +1249,49 @@ mod rextio_tensorflow_runtime {
         Ok(result)
     }
 
+    fn ensure_exact_same_shape(
+        left: &RxtTfTensor,
+        right: &RxtTfTensor,
+    ) -> PyResult<()> {
+        let left_shape = left.concrete_shape()?;
+        let right_shape = right.concrete_shape()?;
+        if left_shape != right_shape {
+            return Err(value_error(format!(
+                "tensor shape mismatch: {left_shape:?} vs {right_shape:?}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn binary_same_shape(
+        left: &RxtTfTensor,
+        right: &RxtTfTensor,
+        op_name: &str,
+        expected_rank: c_int,
+    ) -> PyResult<RxtTfTensor> {
+        left.validate_f32(expected_rank)?;
+        right.validate_f32(expected_rank)?;
+        same_context(left, right)?;
+        let left_device = left.backing_device()?;
+        let right_device = right.backing_device()?;
+        if left_device != right_device {
+            return Err(value_error(format!(
+                "tensor device mismatch: {left_device} vs {right_device}"
+            )));
+        }
+        ensure_exact_same_shape(left, right)?;
+        let status = OwnedStatus::new(left.inner.api)?;
+        let context = left.context();
+        let op = OwnedOp::new(Rc::clone(&context), op_name, &status)?;
+        op.set_device(&left_device, &status)?;
+        op.add_input(left.pointer(), &status)?;
+        op.add_input(right.pointer(), &status)?;
+        op.set_type("T", TF_FLOAT)?;
+        let result = RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
+        result.validate_f32(expected_rank)?;
+        Ok(result)
+    }
+
     pub fn matmul(left: &RxtTfTensor, right: &RxtTfTensor) -> PyResult<RxtTfTensor> {
         Python::attach(|_py| binary(left, right, "MatMul", true, 2))
     }
@@ -1238,6 +1304,30 @@ mod rextio_tensorflow_runtime {
                 1
             };
             binary(left, right, "AddV2", false, expected_rank)
+        })
+    }
+
+    pub fn maximum(left: &RxtTfTensor, right: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            let expected_rank = left.rank()?;
+            if expected_rank != right.rank()? || (expected_rank != 1 && expected_rank != 2) {
+                return Err(value_error(
+                    "maximum requires two equal-rank rank-1 or rank-2 tensors",
+                ));
+            }
+            binary_same_shape(left, right, "Maximum", expected_rank)
+        })
+    }
+
+    pub fn minimum(left: &RxtTfTensor, right: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            let expected_rank = left.rank()?;
+            if expected_rank != right.rank()? || (expected_rank != 1 && expected_rank != 2) {
+                return Err(value_error(
+                    "minimum requires two equal-rank rank-1 or rank-2 tensors",
+                ));
+            }
+            binary_same_shape(left, right, "Minimum", expected_rank)
         })
     }
 

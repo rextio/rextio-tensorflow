@@ -16,6 +16,10 @@ from rextio_tensorflow.claim.add import (
     MUL_BINOP_RULE,
     MUL_CALL_RULE,
     MUL_TARGETS,
+    MAXIMUM_CALL_RULE,
+    MAXIMUM_TARGETS,
+    MINIMUM_CALL_RULE,
+    MINIMUM_TARGETS,
     SUB_BINOP_RULE,
     SUB_CALL_RULE,
     SUB_TARGETS,
@@ -28,6 +32,10 @@ _SUPPORTED = {
     (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D): TENSOR_F32_CPU_1D,
     (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D): TENSOR_F32_CPU_2D,
     (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D): TENSOR_F32_CPU_2D,
+}
+_SAME_RANK_SUPPORTED = {
+    (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D): TENSOR_F32_CPU_1D,
+    (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D): TENSOR_F32_CPU_2D,
 }
 
 
@@ -97,6 +105,14 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
         **{target: (MUL_CALL_RULE, "multiply", "mul") for target in MUL_TARGETS},
         **{target: (SUB_CALL_RULE, "subtract", "sub") for target in SUB_TARGETS},
         **{target: (DIV_CALL_RULE, "divide", "div") for target in DIV_TARGETS},
+        **{
+            target: (MAXIMUM_CALL_RULE, "maximum", "maximum")
+            for target in MAXIMUM_TARGETS
+        },
+        **{
+            target: (MINIMUM_CALL_RULE, "minimum", "minimum")
+            for target in MINIMUM_TARGETS
+        },
     }
     if claimed.kind == "binop" and claimed.target in binops:
         expected_rule, operation, helper = binops[claimed.target]
@@ -121,11 +137,26 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
             f"rextio-tensorflow {operation} lower requires resolved operand types"
         )
     pair = (left, right)
-    expected = _SUPPORTED.get(pair)
+    exact_shape_operation = expected_rule in {
+        MAXIMUM_CALL_RULE,
+        MINIMUM_CALL_RULE,
+    }
+    expected = (
+        _SAME_RANK_SUPPORTED.get(pair)
+        if exact_shape_operation
+        else _SUPPORTED.get(pair)
+    )
     if expected is None or claimed.result_type != expected:
         raise ValueError(
             f"rextio-tensorflow {operation} lower operand/result types changed between claim and lower: "
             f"operands={claimed.operand_types!r} result={claimed.result_type!r}"
+        )
+    if exact_shape_operation and claimed.operand_literals and (
+        len(claimed.operand_literals) != 2
+        or any(literal.is_literal for literal in claimed.operand_literals)
+    ):
+        raise ValueError(
+            f"rextio-tensorflow {operation} lower requires non-literal tensor operands"
         )
     if len(ctx.operands) != 2:
         raise ValueError(

@@ -213,19 +213,87 @@ def test_math_unary_unlisted_aliases_are_not_covered(target: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "target",
+    ("target", "rule"),
     (
-        "tensorflow.maximum",
-        "tf.maximum",
-        "tensorflow.minimum",
-        "tf.minimum",
+        ("tensorflow.maximum", "rextio-tensorflow/maximum-call-f32-cpu"),
+        ("tf.maximum", "rextio-tensorflow/maximum-call-f32-cpu"),
+        ("tensorflow.minimum", "rextio-tensorflow/minimum-call-f32-cpu"),
+        ("tf.minimum", "rextio-tensorflow/minimum-call-f32-cpu"),
     ),
 )
-def test_maximum_minimum_remain_unclaimed_without_full_semantic_matrix(
+@pytest.mark.parametrize("operand_type", (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D))
+def test_claims_exact_maximum_minimum_same_rank_surface(
     target: str,
+    rule: str,
+    operand_type: str,
 ) -> None:
     result = PLUGIN.claim(
-        _call(target, (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D)),
+        _call(target, (operand_type, operand_type)),
+        CONFIG,
+    )
+    assert result == Claimed(rule_id=rule, result_type=operand_type)
+
+
+@pytest.mark.parametrize("target", ("tensorflow.maximum", "tensorflow.minimum"))
+@pytest.mark.parametrize(
+    ("operand_types", "operand_literals", "keywords"),
+    (
+        ((TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D), (), ()),
+        ((TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D), (), ()),
+        ((TENSOR_I64_CPU_1D, TENSOR_I64_CPU_1D), (), ()),
+        ((TENSOR_F32_CPU_1D, "float"), (), ()),
+        ((TENSOR_F32_CPU_1D,), (), ()),
+        (
+            (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D),
+            (ClaimLiteral(is_literal=False), ClaimLiteral(is_literal=True, value=1)),
+            (),
+        ),
+        (
+            (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D),
+            (),
+            (
+                KeywordArg(
+                    name="name",
+                    arg_type="str",
+                    literal=ClaimLiteral(is_literal=True, value="bounded"),
+                ),
+            ),
+        ),
+    ),
+)
+def test_maximum_minimum_near_misses_fail_closed(
+    target: str,
+    operand_types: tuple[str | None, ...],
+    operand_literals: tuple[ClaimLiteral, ...],
+    keywords: tuple[KeywordArg, ...],
+) -> None:
+    result = PLUGIN.claim(
+        _call(
+            target,
+            operand_types,
+            operand_literals=operand_literals,
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert isinstance(result, Rejected)
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        "tensorflow.math.maximum",
+        "tf.math.maximum",
+        "tensorflow.math.minimum",
+        "tf.math.minimum",
+        "tensorflow.raw_ops.Maximum",
+        "tensorflow.raw_ops.Minimum",
+        "tensorflow.maximum_extra",
+    ),
+)
+def test_maximum_minimum_unlisted_aliases_are_not_covered(target: str) -> None:
+    result = PLUGIN.claim(
+        _call(target, (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D)),
         CONFIG,
     )
     assert isinstance(result, NotCovered)

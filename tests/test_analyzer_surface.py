@@ -18,6 +18,8 @@ from rextio.targets.models import TargetSpec
 from rextio_tensorflow.claim.add import (
     BIAS_ADD_RULE,
     DIV_CALL_RULE,
+    MAXIMUM_CALL_RULE,
+    MINIMUM_CALL_RULE,
     MUL_CALL_RULE,
     SUB_CALL_RULE,
 )
@@ -46,6 +48,8 @@ from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D, TensorI64Cpu
 import tensorflow as tf
 import tensorflow.math as tf_math
 from tensorflow import divide as top_divide
+from tensorflow import maximum as top_maximum
+from tensorflow import minimum as top_minimum
 from tensorflow import multiply as top_multiply
 from tensorflow import subtract as top_subtract
 from tensorflow import abs as top_abs
@@ -79,6 +83,21 @@ def divide_top(left: TensorF32Cpu2D, right: TensorF32Cpu1D) -> TensorF32Cpu2D:
 
 def divide_math(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
     return math_divide(left, right)
+
+
+def maximum_rank1(left: TensorF32Cpu1D, right: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return top_maximum(left, right)
+
+
+def minimum_rank2(left: TensorF32Cpu2D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return top_minimum(left, right)
+
+
+def pseudo_math_maximum(
+    left: TensorF32Cpu1D,
+    right: TensorF32Cpu1D,
+) -> TensorF32Cpu1D:
+    return tf.math.maximum(left, right)
 
 
 def abs_top(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
@@ -268,6 +287,41 @@ def test_analyzer_resolves_only_explicit_binary_import_aliases(tmp_path: Path) -
     for name in ("pseudo_truediv", "pseudo_raw_sub"):
         function = _function(analysis, name)
         assert not function.plugin_claims
+
+
+def test_analyzer_routes_exact_maximum_minimum_and_generates_helpers(
+    tmp_path: Path,
+) -> None:
+    registry = _registry()
+    analysis = analyze_project(
+        _write_project(tmp_path),
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=RextioConfig(),
+    )
+    expected = {
+        "maximum_rank1": ("tensorflow.maximum", MAXIMUM_CALL_RULE),
+        "minimum_rank2": ("tensorflow.minimum", MINIMUM_CALL_RULE),
+    }
+    for name, (target, rule) in expected.items():
+        function = _function(analysis, name)
+        assert function.accepted is True
+        assert function.route == f"native-plugin:{PLUGIN_ID}"
+        assert len(function.plugin_claims) == 1
+        claim = function.plugin_claims[0]
+        assert claim.target == target
+        assert claim.rule_id == rule
+
+    assert not _function(analysis, "pseudo_math_maximum").plugin_claims
+
+    type_maps, providers, by_key = _lowering_inputs(registry)
+    source = generate_rust_module(
+        lower_project(analysis, plugin_types=type_maps),
+        plugin_providers=providers,
+        plugin_types_by_key=by_key,
+    )
+    assert "rextio_tensorflow_runtime::maximum(&left, &right)?" in source
+    assert "rextio_tensorflow_runtime::minimum(&left, &right)?" in source
 
 
 def test_analyzer_resolves_only_exact_math_unary_aliases(tmp_path: Path) -> None:

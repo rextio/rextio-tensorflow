@@ -178,6 +178,7 @@ same constraints and fails with `ValueError` (not `assert`).
 | Multiply | `tf.multiply` / `tf.math.multiply` or binary `*` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/mul-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-013` / `012` |
 | Subtract | `tf.subtract` / `tf.math.subtract` or binary `-` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/sub-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-014` / `015` |
 | Divide | `tf.divide` / `tf.math.divide` or binary `/` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/div-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-016` / `017` |
+| Maximum / minimum | top-level `tf.maximum` / `tf.minimum` | **1 × 1 or 2 × 2**, equal ranks and exact concrete shapes | exactly two positional non-literal tensors; no keywords | preserves rank | `rextio-tensorflow/{maximum,minimum}-call-f32-cpu` | `RXTP-TENSORFLOW-032` / `033` |
 | Reduce mean | `tf.reduce_mean` / `tf.math.reduce_mean` | **2** | literal `axis=0\|1`, keyword or positional; named literal `keepdims=True\|False` or omitted | **1 or 2** | legacy axis-1 rule or `rextio-tensorflow/reduce-mean-literal-axis-f32-cpu-2d` | `RXTP-TENSORFLOW-004` / `022` |
 | Reduce sum | `tf.reduce_sum` / `tf.math.reduce_sum` | **2** | literal `axis=0\|1`, keyword or positional; named literal `keepdims=True\|False` or omitted | **1 or 2** | legacy axis-1 rule or `rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d` | `RXTP-TENSORFLOW-011` / `023` |
 | Softmax | `tf.nn.softmax` | **1 or 2** | rank 1: omitted or literal `axis=0`; rank 2: explicit literal `axis=1`; literal axes may be keyword or positional | preserves float32 rank | `rextio-tensorflow/softmax-axis{0-f32-cpu-1d,1-f32-cpu-2d}` | `RXTP-TENSORFLOW-025` / `007` |
@@ -195,6 +196,9 @@ same constraints and fails with `ValueError` (not `assert`).
 
 Claims prove **ranks only**. Concrete matrix / broadcast dimension
 compatibility is checked by TFE (`MatMul`, `AddV2`, …) at runtime.
+Maximum/minimum are deliberately narrower: the generated runtime compares
+every concrete dimension and rejects unequal shapes before constructing the
+TFE op, so no broadcasting is admitted.
 
 ### Coverage declaration (analyzer routing)
 
@@ -208,7 +212,7 @@ Declared packages/modules/symbols (`rules/coverage.py`):
   `tensorflow.math.log`, `tensorflow.math.sqrt`, `tensorflow.add`,
   `tensorflow.math.add`, `tensorflow.multiply`, `tensorflow.math.multiply`,
   `tensorflow.subtract`, `tensorflow.math.subtract`, `tensorflow.divide`,
-  `tensorflow.math.divide`,
+  `tensorflow.math.divide`, `tensorflow.maximum`, `tensorflow.minimum`,
   `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`, `tensorflow.reduce_sum`,
   `tensorflow.math.reduce_sum`, `tensorflow.nn.softmax`,
   `tensorflow.argmax`, `tensorflow.nn.bias_add`
@@ -251,6 +255,7 @@ Lowering emits calls into the exact generated module
 | multiply / `*` | `rextio_tensorflow_runtime::mul(&a, &b)?` |
 | subtract / `-` | `rextio_tensorflow_runtime::sub(&a, &b)?` |
 | divide / `/` | `rextio_tensorflow_runtime::div(&a, &b)?` |
+| maximum / minimum | `rextio_tensorflow_runtime::{maximum,minimum}(&a, &b)?` |
 | reduce_mean axis=0/1 | `reduce_mean_axis{0,1}[_keepdims](&x)?` |
 | reduce_sum axis=0/1 | `reduce_sum_axis{0,1}[_keepdims](&x)?` |
 | softmax final axis | rank 1: `softmax_axis0(&x)?`; rank 2: `softmax_axis1(&x)?` |
@@ -302,7 +307,9 @@ All of the following are required for a site to be **Claimed** and lowered:
    `tf.function`/AutoGraph, or non-`CPU:0` execution.
 
 Static claims do **not** prove concrete shapes (e.g. matmul inner dimensions).
-Those fail later inside TFE if incompatible.
+Most incompatibilities fail later inside TFE. Maximum/minimum are the bounded
+exception: their runtime wrapper rejects unequal concrete shapes before
+constructing the TFE operation.
 
 ---
 
@@ -330,8 +337,8 @@ Anything outside the tables above is either:
   `tf.argmax(output_type=...)`
 - Matmul transpose / other keywords
 - In-place ops; scalar operands; inferred aliases such as `tf.math.truediv`;
-  `tf.maximum` / `tf.minimum` pending a complete broadcast and special-value
-  platform matrix
+  `tf.math.maximum` / `tf.math.minimum`, raw-op forms, and broadcasting for
+  `tf.maximum` / `tf.minimum`
 - Host resolve (`TFE_TensorHandleResolve`) on the inference path
 - DLPack
 - `TFE_NewContext` / second eager context / Session
@@ -426,6 +433,8 @@ Also accepted (when types match the tables):
 - `tf.linalg.matmul(a, b)` (alias of matmul rule)
 - Explicit `tf.math.{add,multiply,subtract,divide}` aliases and `+ * - /`
   across the bounded rank matrix
+- top-level `tf.maximum` / `tf.minimum` for two same-rank rank-1 or rank-2
+  tensors whose concrete shapes are exactly equal
 - rank-1 `tf.nn.relu` / `sigmoid` / `tanh`
 - rank-1/rank-2 `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`,
   `tf.math.log`, and `tf.math.sqrt`
@@ -454,7 +463,8 @@ sigmoid; tensor-dependent control flow remains unsupported.
 | rank-1 `tf.nn.softmax(x, axis=1)` | `Rejected` |
 | `tf.argmax(x, axis=1, output_type=tf.int32)` | `Rejected` |
 | `tf.nn.bias_add(x, bias, data_format="NCHW")` | `Rejected` |
-| `tf.maximum(x, bias)` / `tf.minimum(x, bias)` | `NotCovered` pending complete semantic certification |
+| `tf.maximum(rank2, rank1)` / `tf.minimum(rank1, rank2)` | `Rejected` (mixed ranks / broadcasting excluded) |
+| `tf.math.maximum(x, y)` / raw-op forms | `NotCovered` (only exact top-level targets are declared) |
 | `tf.cos(x)` | `NotCovered` |
 | Method-style receiver on a covered call | `NotCovered` |
 | Operand types outside plugin vocabulary on a covered symbol | `Rejected` (`RXTP-TENSORFLOW-010` / op diagnostic) |
@@ -563,7 +573,8 @@ control flow → broadcast add → classification. The 0.1.2 follow-up adds a
 real-Cargo slice spanning rank-1 relu/sigmoid/tanh → functional multiply →
 rank-1 Softmax default/axis 0 → Abs/Neg/Square/Exp/Log/Sqrt → NHWC BiasAdd →
 subtraction → reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions →
-ArgMax axis 0, with CPU, NaN/Inf/domain/signed-zero, shape-error,
+exact-shape Maximum/Minimum → ArgMax axis 0, with CPU,
+NaN/Inf/domain/signed-zero, shape-error,
 no-host-resolve, provenance, and lifetime checks. The Linux
 probe is opt-in and does not claim certification when it has not been run.
 

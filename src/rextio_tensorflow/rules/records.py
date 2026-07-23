@@ -245,6 +245,60 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/maximum-call-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "top-level tf.maximum on two float32 CPU tensors of equal "
+                "rank 1 or equal rank 2"
+            ),
+        ),
+        constraint=(
+            "Exactly two positional non-literal plugin tensor operands and no "
+            "keywords. Both annotations must have the same rank. Before "
+            "constructing the owned same-wheel TFE Maximum operation, the "
+            "runtime checks every concrete dimension for exact shape equality; "
+            "broadcasting, scalars, aliases, and tensorflow.math/raw_ops forms "
+            "are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-032",
+        guidance=(
+            "Call tf.maximum(x, y) with two TensorF32Cpu1D tensors or two "
+            "TensorF32Cpu2D tensors having exactly equal concrete shapes."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/minimum-call-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "top-level tf.minimum on two float32 CPU tensors of equal "
+                "rank 1 or equal rank 2"
+            ),
+        ),
+        constraint=(
+            "Exactly two positional non-literal plugin tensor operands and no "
+            "keywords. Both annotations must have the same rank. Before "
+            "constructing the owned same-wheel TFE Minimum operation, the "
+            "runtime checks every concrete dimension for exact shape equality; "
+            "broadcasting, scalars, aliases, and tensorflow.math/raw_ops forms "
+            "are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-033",
+        guidance=(
+            "Call tf.minimum(x, y) with two TensorF32Cpu1D tensors or two "
+            "TensorF32Cpu2D tensors having exactly equal concrete shapes."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d",
         provider="rextio-tensorflow",
         scope=RuleScope(
