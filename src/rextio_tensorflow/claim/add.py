@@ -10,6 +10,8 @@ from rextio_tensorflow.diagnostics import (
     DIAGNOSTIC_BIAS_ADD,
     DIAGNOSTIC_DIV_BINOP,
     DIAGNOSTIC_DIV_CALL,
+    DIAGNOSTIC_MAXIMUM,
+    DIAGNOSTIC_MINIMUM,
     DIAGNOSTIC_MUL_BINOP,
     DIAGNOSTIC_MUL_CALL,
     DIAGNOSTIC_SUB_BINOP,
@@ -30,6 +32,8 @@ SUB_BINOP_RULE = "rextio-tensorflow/sub-binop-f32-cpu"
 DIV_CALL_RULE = "rextio-tensorflow/div-call-f32-cpu"
 DIV_BINOP_RULE = "rextio-tensorflow/div-binop-f32-cpu"
 BIAS_ADD_RULE = "rextio-tensorflow/bias-add-nhwc-f32-cpu-2d"
+MAXIMUM_CALL_RULE = "rextio-tensorflow/maximum-call-f32-cpu"
+MINIMUM_CALL_RULE = "rextio-tensorflow/minimum-call-f32-cpu"
 # Back-compat alias used by older tests / docs references.
 ADD_RULE = ADD_CALL_RULE
 ADD_TARGETS = frozenset(
@@ -65,12 +69,18 @@ DIV_TARGETS = frozenset(
     }
 )
 BIAS_ADD_TARGETS = frozenset({"tensorflow.nn.bias_add", "tf.nn.bias_add"})
+MAXIMUM_TARGETS = frozenset({"tensorflow.maximum", "tf.maximum"})
+MINIMUM_TARGETS = frozenset({"tensorflow.minimum", "tf.minimum"})
 
 _SUPPORTED_PAIRS: dict[tuple[str, str], str] = {
     (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D): TENSOR_F32_CPU_2D,
     (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D): TENSOR_F32_CPU_1D,
     (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D): TENSOR_F32_CPU_2D,
     (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D): TENSOR_F32_CPU_2D,
+}
+_SAME_RANK_PAIRS: dict[tuple[str, str], str] = {
+    (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_1D): TENSOR_F32_CPU_1D,
+    (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D): TENSOR_F32_CPU_2D,
 }
 
 
@@ -204,6 +214,24 @@ def try_claim(site: ClaimSite) -> ClaimResult | None:
             )
             for target in DIV_TARGETS
         },
+        **{
+            target: (
+                MAXIMUM_CALL_RULE,
+                DIAGNOSTIC_MAXIMUM,
+                "maximum",
+                "tf.maximum(x, y)",
+            )
+            for target in MAXIMUM_TARGETS
+        },
+        **{
+            target: (
+                MINIMUM_CALL_RULE,
+                DIAGNOSTIC_MINIMUM,
+                "minimum",
+                "tf.minimum(x, y)",
+            )
+            for target in MINIMUM_TARGETS
+        },
     }
     if site.target in calls:
         if site.receiver is not None:
@@ -216,6 +244,15 @@ def try_claim(site: ClaimSite) -> ClaimResult | None:
                 f"keywords on {operation} are not supported",
                 f"Call {syntax} with two positional tensors only.",
             )
+        if site.target in MAXIMUM_TARGETS or site.target in MINIMUM_TARGETS:
+            return _claim_same_rank_operands(
+                site,
+                tuple(site.operand_types),
+                rule_id=rule_id,
+                diagnostic=diagnostic,
+                operation=operation,
+                syntax=syntax,
+            )
         return _claim_operands(
             site,
             tuple(site.operand_types),
@@ -225,6 +262,53 @@ def try_claim(site: ClaimSite) -> ClaimResult | None:
             syntax=syntax,
         )
     return None
+
+
+def _claim_same_rank_operands(
+    site: ClaimSite,
+    operands: tuple[str | None, ...],
+    *,
+    rule_id: str,
+    diagnostic: str,
+    operation: str,
+    syntax: str,
+) -> ClaimResult:
+    if len(operands) != 2:
+        return reject(
+            site,
+            diagnostic,
+            f"{operation} requires exactly two positional tensor operands",
+            f"Write {syntax} with two same-rank tensors.",
+        )
+    if site.operand_literals and (
+        len(site.operand_literals) != 2
+        or any(literal.is_literal for literal in site.operand_literals)
+    ):
+        return reject(
+            site,
+            diagnostic,
+            f"{operation} requires non-literal tensor operands",
+            f"Write {syntax} with two annotated tensors.",
+        )
+    left, right = operands
+    if left is None or right is None:
+        return NotCovered()
+    if not is_tensor_type(left) or not is_tensor_type(right):
+        return reject(
+            site,
+            DIAGNOSTIC_UNSUPPORTED,
+            "operand types are outside the float32 CPU tensor surface",
+            "Annotate both operands as TensorF32Cpu1D or TensorF32Cpu2D.",
+        )
+    result = _SAME_RANK_PAIRS.get((left, right))
+    if result is None:
+        return reject(
+            site,
+            diagnostic,
+            f"unsupported {operation} operand pair {operands!r}",
+            "Use two rank-1 tensors or two rank-2 tensors with compatible shapes.",
+        )
+    return Claimed(rule_id=rule_id, result_type=result)
 
 
 def _claim_operands(
@@ -277,6 +361,10 @@ __all__ = [
     "MUL_BINOP_RULE",
     "MUL_CALL_RULE",
     "MUL_TARGETS",
+    "MAXIMUM_CALL_RULE",
+    "MAXIMUM_TARGETS",
+    "MINIMUM_CALL_RULE",
+    "MINIMUM_TARGETS",
     "SUB_BINOP_RULE",
     "SUB_CALL_RULE",
     "SUB_TARGETS",

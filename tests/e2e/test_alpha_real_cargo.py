@@ -92,6 +92,14 @@ def multiply_1d_2d(left: TensorF32Cpu1D, right: TensorF32Cpu2D) -> TensorF32Cpu2
     return left * right
 
 
+def maximum_1d(left: TensorF32Cpu1D, right: TensorF32Cpu1D) -> TensorF32Cpu1D:
+    return tf.maximum(left, right)
+
+
+def minimum_2d(left: TensorF32Cpu2D, right: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.minimum(left, right)
+
+
 def rank1_activations(x: TensorF32Cpu1D) -> TensorF32Cpu1D:
     return tf.nn.tanh(tf.nn.sigmoid(tf.nn.relu(x)))
 
@@ -801,6 +809,112 @@ def test_multiply_real_cargo(project: CertifiedProject) -> None:
 
     gc.collect()
     assert _tensor_equal(held, expected_held)
+
+
+def test_maximum_minimum_real_cargo(project: CertifiedProject) -> None:
+    """Certify same-rank broadcasting, errors, and eager-relative IEEE behavior."""
+    tf = _import_tf()
+    expected_routes = {
+        "tf_app.kernels.maximum_1d":
+            "rextio-tensorflow/maximum-call-f32-cpu",
+        "tf_app.kernels.minimum_2d":
+            "rextio-tensorflow/minimum-call-f32-cpu",
+    }
+    for qualname, rule_id in expected_routes.items():
+        record = _route_of(project, qualname)
+        assert record["native_status"] == "accepted"
+        assert record["route"] == "native-plugin:rextio-tensorflow"
+        assert [claim["rule_id"] for claim in record.get("plugin_claims") or []] == [
+            rule_id
+        ]
+
+    rust = (
+        project.project_root
+        / ".rextio"
+        / "generated"
+        / "rust"
+        / "src"
+        / "lib.rs"
+    ).read_text(encoding="utf-8")
+    assert 'binary(left, right, "Maximum", false, expected_rank)' in rust
+    assert 'binary(left, right, "Minimum", false, expected_rank)' in rust
+    assert "ensure_exact_same_shape" not in rust
+
+    vector_left = tf.constant([-3.0, 2.0, 8.0], dtype=tf.float32)
+    vector_right = tf.constant([1.0], dtype=tf.float32)
+    matrix_left = tf.constant([[1.0, -2.0], [3.0, 4.0]], dtype=tf.float32)
+    matrix_right = tf.constant([[0.5], [5.0]], dtype=tf.float32)
+    cases = (
+        (
+            "tf_app.kernels.maximum_1d",
+            (vector_left, vector_right),
+            tf.maximum,
+        ),
+        (
+            "tf_app.kernels.minimum_2d",
+            (matrix_left, matrix_right),
+            tf.minimum,
+        ),
+    )
+    for qualname, args, eager_call in cases:
+        checker = project.equivalence_checker(
+            qualname,
+            equals=_tensor_equal,
+            args_equals=_args_unmutated,
+            copy_args=_copy_tensor_args,
+        )
+        native = checker(*args)
+        assert _tensor_equal(native, eager_call(*args))
+        assert native.dtype == tf.float32
+        assert "CPU" in native.device
+
+    special_left = tf.constant(
+        [-0.0, 0.0, float("nan"), float("inf"), float("-inf")],
+        dtype=tf.float32,
+    )
+    special_right = tf.constant(
+        [0.0, -0.0, 1.0, float("-inf"), float("inf")],
+        dtype=tf.float32,
+    )
+    with _native_mode(project, "native"):
+        from tf_app.kernels import maximum_1d, minimum_2d
+
+        native_maximum = maximum_1d(special_left, special_right)
+        native_minimum = minimum_2d(
+            tf.stack((special_left, special_right)),
+            tf.stack((special_right, special_left)),
+        )
+        incompatible_vector = tf.constant([1.0, 2.0], dtype=tf.float32)
+        with pytest.raises(Exception):
+            tf.maximum(vector_left, incompatible_vector)
+        with pytest.raises(Exception):
+            maximum_1d(
+                vector_left,
+                incompatible_vector,
+            )
+        incompatible_matrix = tf.constant(
+            [[1.0], [2.0], [3.0]],
+            dtype=tf.float32,
+        )
+        with pytest.raises(Exception):
+            tf.minimum(matrix_left, incompatible_matrix)
+        with pytest.raises(Exception):
+            minimum_2d(
+                matrix_left,
+                incompatible_matrix,
+            )
+
+    assert _float_special_values_equal(
+        native_maximum,
+        tf.maximum(special_left, special_right),
+    )
+    assert _float_special_values_equal(
+        native_minimum,
+        tf.minimum(
+            tf.stack((special_left, special_right)),
+            tf.stack((special_right, special_left)),
+        ),
+    )
 
 
 def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:

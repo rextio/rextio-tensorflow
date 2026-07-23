@@ -307,6 +307,63 @@ def test_lower_add_binop() -> None:
     assert lowered.rust == "rextio_tensorflow_runtime::add(&x, &b)?"
 
 
+@pytest.mark.parametrize(
+    ("target", "rule", "helper"),
+    (
+        (
+            "tensorflow.maximum",
+            "rextio-tensorflow/maximum-call-f32-cpu",
+            "maximum",
+        ),
+        (
+            "tensorflow.minimum",
+            "rextio-tensorflow/minimum-call-f32-cpu",
+            "minimum",
+        ),
+    ),
+)
+@pytest.mark.parametrize("operand_type", (TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D))
+def test_lower_maximum_minimum_revalidates_same_rank_metadata(
+    target: str,
+    rule: str,
+    helper: str,
+    operand_type: str,
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target=target,
+        operand_types=(operand_type, operand_type),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=rule,
+        result_type=operand_type,
+    )
+    ctx = LoweringContext(
+        operands=("left", "right"),
+        target_language="rust",
+        fresh_name=_fresh_name,
+    )
+    lowered = PLUGIN.lower(claimed, ctx)
+    assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&left, &right)?"
+
+    with pytest.raises(ValueError, match="operand/result"):
+        PLUGIN.lower(
+            replace(claimed, operand_types=(TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D)),
+            ctx,
+        )
+    with pytest.raises(ValueError, match="operand/result"):
+        PLUGIN.lower(replace(claimed, result_type=TENSOR_I64_CPU_1D), ctx)
+
+
+def test_maximum_minimum_runtime_delegates_same_rank_broadcast_to_tfe() -> None:
+    helper = runtime_module_helpers()
+    assert 'binary(left, right, "Maximum", false, expected_rank)' in helper
+    assert 'binary(left, right, "Minimum", false, expected_rank)' in helper
+    assert "ensure_exact_same_shape" not in helper
+    assert "tensor shape mismatch" not in helper
+
+
 @pytest.mark.parametrize("explicit_nhwc", (False, True))
 def test_lower_bounded_nhwc_bias_add(explicit_nhwc: bool) -> None:
     keywords = (

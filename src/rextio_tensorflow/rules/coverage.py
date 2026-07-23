@@ -30,6 +30,8 @@ COVERAGE = CoverageDecl(
         "tensorflow.math.subtract",
         "tensorflow.divide",
         "tensorflow.math.divide",
+        "tensorflow.maximum",
+        "tensorflow.minimum",
         "tensorflow.nn.bias_add",
         "tensorflow.reduce_mean",
         "tensorflow.math.reduce_mean",

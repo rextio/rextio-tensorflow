@@ -1241,6 +1241,30 @@ mod rextio_tensorflow_runtime {
         })
     }
 
+    pub fn maximum(left: &RxtTfTensor, right: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            let expected_rank = left.rank()?;
+            if expected_rank != right.rank()? || (expected_rank != 1 && expected_rank != 2) {
+                return Err(value_error(
+                    "maximum requires two equal-rank rank-1 or rank-2 tensors",
+                ));
+            }
+            binary(left, right, "Maximum", false, expected_rank)
+        })
+    }
+
+    pub fn minimum(left: &RxtTfTensor, right: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            let expected_rank = left.rank()?;
+            if expected_rank != right.rank()? || (expected_rank != 1 && expected_rank != 2) {
+                return Err(value_error(
+                    "minimum requires two equal-rank rank-1 or rank-2 tensors",
+                ));
+            }
+            binary(left, right, "Minimum", false, expected_rank)
+        })
+    }
+
     pub fn bias_add(
         value: &RxtTfTensor,
         bias: &RxtTfTensor,

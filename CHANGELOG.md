@@ -38,9 +38,12 @@ Changelog and Semantic Versioning conventions.
   with data format omitted or literal `NHWC`. The runtime resolves
   `TFE_OpSetAttrString` from the exact owning TensorFlow 2.21 image, sets NHWC
   explicitly, and preserves existing context/device/RAII/error boundaries.
-- Keep `tf.maximum` / `tf.minimum` outside this wave: native lowering remains
-  deferred until every supported broadcast pair, incompatible shape, NaN/Inf,
-  and signed-zero case is certified across the native platform matrix.
+- Add exact top-level `tf.maximum` / `tf.minimum` for two float32 CPU tensors
+  of equal rank 1 or equal rank 2. Owned TFE `Maximum` / `Minimum` execution
+  preserves TensorFlow's same-rank broadcasting and incompatible-shape
+  behavior. Real-Cargo coverage compares finite values, broadcasting,
+  incompatible shapes, NaN/Inf classes, and signed-zero bits with eager
+  TensorFlow on each native CI platform.
 - Add `tf.nn.tanh(x)` for one positional float32 CPU rank-2 tensor with no
   keywords. The owned TFE `Tanh` operation reuses the existing same-wheel,
   RAII, eager-context, and float32 rank-2 result validation path.
