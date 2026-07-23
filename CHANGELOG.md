@@ -3,6 +3,22 @@
 All notable changes to `rextio-tensorflow` are documented here following Keep a
 Changelog and Semantic Versioning conventions.
 
+## [Unreleased]
+
+### Changed
+
+- Prepared 0.1.1 compatibility with `rextio` 0.1.5 / plugin API 1.4 while
+  retaining this provider's declared API **1.3** and its existing package,
+  CPython, TensorFlow, and private-ABI pins.
+- Replaced provider-side exact host API equality guards with a compatible
+  minimum guard: host API 1.x minor 3 or newer is accepted, while older,
+  major-mismatched, or malformed hosts fail closed if dependencies are
+  bypassed. Core's loader remains the primary compatibility authority.
+- Reject standalone Rust lowering explicitly. This provider remains a PyO3
+  host-extension-only plugin and does not declare `artifact_capability()`.
+- Added focused Core 0.1.3/0.1.4/0.1.5 CI compatibility coverage without
+  changing the native macOS/Linux E2E gates.
+
 ## [0.1.0] — 2026-07-18
 
 Public native-AOT Alpha release, tagged and live on PyPI as

@@ -1,4 +1,4 @@
-"""Release metadata contracts for the public 0.1.0 Alpha."""
+"""Package metadata contracts for the unreleased 0.1.1 Alpha hotfix."""
 
 from __future__ import annotations
 
@@ -23,6 +23,6 @@ def test_release_metadata_is_public_alpha() -> None:
 
 def test_release_version_and_exact_tensorflow_pin() -> None:
     """The release preserves its exact private-ABI runtime boundary."""
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.1.1"
     assert "tensorflow==2.21.0" in PROJECT["dependencies"]
     assert "rextio>=0.1.3,<0.2" in PROJECT["dependencies"]

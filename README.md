@@ -1,6 +1,7 @@
 # rextio-tensorflow
 
-**Public native-AOT Alpha 0.1.0** (release dated **2026-07-18**).
+**Unreleased 0.1.1 native-AOT Alpha compatibility hotfix.** The latest released
+package remains 0.1.0 (released **2026-07-18**).
 
 This is a Rextio **plugin API 1.3** provider that lowers a **tiny, statically
 proven** subset of Python **TensorFlow 2.21.0 `CPU:0` inference-oriented code** to native Rust
@@ -11,12 +12,18 @@ wheel’s public TFE C API plus a **private** EagerTensor bridge
 
 | Status field | Value |
 | --- | --- |
-| Version | `0.1.0` (`src/rextio_tensorflow/__about__.py`) |
+| Version | `0.1.1` (`src/rextio_tensorflow/__about__.py`) |
 | Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
-| Release state | **Tagged and live on PyPI** — [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) |
+| Release state | **Unreleased — do not tag or publish**; latest release is [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
+
+This hotfix remains a plugin API **1.3** provider and supports Core 0.1.5's
+API 1.4 host-extension path. It rejects boundary-free standalone Rust lowering
+and does not opt into standalone artifact capability. Provider entry methods
+also fail closed unless the host advertises API 1.x minor 3 or newer, protecting
+the API-1.3 field boundary even if package dependencies are bypassed.
 
 Final release verification completed on 2026-07-18: GitHub Actions
 [run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
@@ -40,7 +47,7 @@ plugin registration, the generated runtime helper
 
 | Component | Contract | Enforcement / evidence |
 | --- | --- | --- |
-| Package version | `0.1.0` | `__about__.__version__` |
+| Package version | `0.1.1` (unreleased) | `__about__.__version__` |
 | CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
 | Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
 | Rextio package | **`>=0.1.3,<0.2`** | Allowed package range in `pyproject.toml`, not an exact package pin |
@@ -493,11 +500,11 @@ probe is opt-in and does not claim certification when it has not been run.
 | Field | Value |
 | --- | --- |
 | Name | `rextio-tensorflow` |
-| Version | `0.1.0` |
+| Version | `0.1.1` (unreleased) |
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
 | Classifier | `Development Status :: 3 - Alpha` |
-| Release date | `2026-07-18` |
-| Distribution state | [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) live on PyPI; annotated tag `0.1.0` |
+| Release date | Not yet released |
+| Distribution state | **Unreleased — no 0.1.1 tag or PyPI publication**; [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) remains live |
 | License | MIT |
 
 The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
@@ -505,8 +512,8 @@ and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
 `ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
 wheel metadata.
 
-This is the tagged public Alpha 0.1.0 source for
-`rextio/rextio-tensorflow`, released on GitHub and PyPI. Final CI run
+This is the unreleased 0.1.1 source on its integration branch. The tagged
+public Alpha 0.1.0 remains the latest GitHub/PyPI release; its final CI run
 `29597803215` completed 13/13 jobs successfully, followed by the verified
 no-cache CPython 3.11 installation described above.
 
