@@ -15,11 +15,35 @@ from rextio.plugins.api import (
     ReceiverMeta,
 )
 
-from rextio_tensorflow.claim.activations import RELU_RULE, SIGMOID_RULE, TANH_RULE
-from rextio_tensorflow.claim.add import ADD_BINOP_RULE, MUL_BINOP_RULE
-from rextio_tensorflow.claim.classification import ARGMAX_RULE, SOFTMAX_RULE
+from rextio_tensorflow.claim.activations import (
+    RELU_1D_RULE,
+    RELU_RULE,
+    SIGMOID_1D_RULE,
+    SIGMOID_RULE,
+    TANH_1D_RULE,
+    TANH_RULE,
+)
+from rextio_tensorflow.claim.add import (
+    ADD_BINOP_RULE,
+    DIV_BINOP_RULE,
+    DIV_CALL_RULE,
+    MUL_BINOP_RULE,
+    MUL_CALL_RULE,
+    SUB_BINOP_RULE,
+    SUB_CALL_RULE,
+)
+from rextio_tensorflow.claim.classification import (
+    ARGMAX_AXIS0_RULE,
+    ARGMAX_RULE,
+    SOFTMAX_RULE,
+)
 from rextio_tensorflow.claim.matmul import MATMUL_RULE
-from rextio_tensorflow.claim.reductions import MEAN_RULE, SUM_RULE
+from rextio_tensorflow.claim.reductions import (
+    MEAN_GENERAL_RULE,
+    MEAN_RULE,
+    SUM_GENERAL_RULE,
+    SUM_RULE,
+)
 from rextio_tensorflow.diagnostics import (
     TENSOR_F32_CPU_1D,
     TENSOR_F32_CPU_2D,
@@ -125,26 +149,32 @@ def test_runtime_helper_has_same_wheel_and_ownership_hardening() -> None:
     assert "RTLD_DEFAULT" not in helper
     assert "TF_NewTensor" not in helper
     assert "TFE_TensorHandleResolve" not in helper
+    assert 'binary(left, right, "Sub", false, expected_rank)' in helper
+    assert 'binary(left, right, "RealDiv", false, expected_rank)' in helper
+    assert "input.validate_f32(expected_rank)?" in helper
     assert ".unwrap()" not in helper
     assert ".expect(" not in helper
     assert "panic!" not in helper
 
 
 def test_lower_unary_activations() -> None:
-    for target, rule, helper in (
-        ("tensorflow.nn.relu", RELU_RULE, "relu"),
-        ("tensorflow.nn.sigmoid", SIGMOID_RULE, "sigmoid"),
-        ("tensorflow.nn.tanh", TANH_RULE, "tanh"),
+    for target, operand, rule, helper in (
+        ("tensorflow.nn.relu", TENSOR_F32_CPU_1D, RELU_1D_RULE, "relu"),
+        ("tf.nn.relu", TENSOR_F32_CPU_2D, RELU_RULE, "relu"),
+        ("tensorflow.nn.sigmoid", TENSOR_F32_CPU_1D, SIGMOID_1D_RULE, "sigmoid"),
+        ("tf.nn.sigmoid", TENSOR_F32_CPU_2D, SIGMOID_RULE, "sigmoid"),
+        ("tensorflow.nn.tanh", TENSOR_F32_CPU_1D, TANH_1D_RULE, "tanh"),
+        ("tf.nn.tanh", TENSOR_F32_CPU_2D, TANH_RULE, "tanh"),
     ):
         claimed = ClaimSite(
             kind="call",
             target=target,
-            operand_types=(TENSOR_F32_CPU_2D,),
+            operand_types=(operand,),
             file_path="",
             line=0,
             column=0,
             rule_id=rule,
-            result_type=TENSOR_F32_CPU_2D,
+            result_type=operand,
         )
         ctx = LoweringContext(
             operands=("tmp",),
@@ -175,26 +205,42 @@ def test_lower_add_binop() -> None:
     assert lowered.rust == "rextio_tensorflow_runtime::add(&x, &b)?"
 
 
-def test_lower_multiply_binop_revalidates_broadcast_metadata() -> None:
+@pytest.mark.parametrize(
+    ("kind", "target", "rule", "helper"),
+    (
+        ("call", "tensorflow.multiply", MUL_CALL_RULE, "mul"),
+        ("call", "tf.math.multiply", MUL_CALL_RULE, "mul"),
+        ("binop", "*", MUL_BINOP_RULE, "mul"),
+        ("call", "tensorflow.subtract", SUB_CALL_RULE, "sub"),
+        ("call", "tf.math.subtract", SUB_CALL_RULE, "sub"),
+        ("binop", "-", SUB_BINOP_RULE, "sub"),
+        ("call", "tensorflow.divide", DIV_CALL_RULE, "div"),
+        ("call", "tf.math.divide", DIV_CALL_RULE, "div"),
+        ("binop", "/", DIV_BINOP_RULE, "div"),
+    ),
+)
+def test_lower_binary_surface_revalidates_broadcast_metadata(
+    kind: str, target: str, rule: str, helper: str
+) -> None:
     claimed = ClaimSite(
-        kind="binop",
-        target="*",
+        kind=kind,
+        target=target,
         operand_types=(TENSOR_F32_CPU_2D, TENSOR_F32_CPU_1D),
         file_path="",
         line=0,
         column=0,
-        rule_id=MUL_BINOP_RULE,
+        rule_id=rule,
         result_type=TENSOR_F32_CPU_2D,
     )
     ctx = LoweringContext(
         operands=("x", "scale"), target_language="rust", fresh_name=_fresh_name
     )
     lowered = PLUGIN.lower(claimed, ctx)
-    assert lowered.rust == "rextio_tensorflow_runtime::mul(&x, &scale)?"
+    assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&x, &scale)?"
     malformed = replace(claimed, result_type=TENSOR_F32_CPU_1D)
     with pytest.raises(ValueError, match="operand/result"):
         PLUGIN.lower(malformed, ctx)
-    with pytest.raises(ValueError, match="multiply lower requires resolved"):
+    with pytest.raises(ValueError, match="lower requires resolved"):
         PLUGIN.lower(replace(claimed, operand_types=(None, TENSOR_F32_CPU_1D)), ctx)
 
 
@@ -252,6 +298,124 @@ def test_lower_reduce_sum_axis1() -> None:
 
 
 @pytest.mark.parametrize(
+    ("target", "rule", "axis", "keepdims", "result_type", "helper"),
+    (
+        (
+            "tensorflow.reduce_mean",
+            MEAN_GENERAL_RULE,
+            0,
+            False,
+            TENSOR_F32_CPU_1D,
+            "reduce_mean_axis0",
+        ),
+        (
+            "tensorflow.reduce_mean",
+            MEAN_GENERAL_RULE,
+            1,
+            True,
+            TENSOR_F32_CPU_2D,
+            "reduce_mean_axis1_keepdims",
+        ),
+        (
+            "tensorflow.reduce_sum",
+            SUM_GENERAL_RULE,
+            0,
+            True,
+            TENSOR_F32_CPU_2D,
+            "reduce_sum_axis0_keepdims",
+        ),
+        (
+            "tensorflow.reduce_sum",
+            SUM_RULE,
+            1,
+            False,
+            TENSOR_F32_CPU_1D,
+            "reduce_sum_axis1",
+        ),
+    ),
+)
+def test_lower_reduction_positional_axis_is_metadata_only(
+    target: str,
+    rule: str,
+    axis: int,
+    keepdims: bool,
+    result_type: str,
+    helper: str,
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target=target,
+        operand_types=(TENSOR_F32_CPU_2D, "int"),
+        operand_literals=(
+            ClaimLiteral(is_literal=False),
+            ClaimLiteral(is_literal=True, value=axis),
+        ),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=rule,
+        result_type=result_type,
+        keywords=(
+            KeywordArg(
+                name="keepdims",
+                arg_type="bool",
+                literal=ClaimLiteral(is_literal=True, value=keepdims),
+            ),
+        ),
+    )
+    one_operand_ctx = LoweringContext(
+        operands=("h",), target_language="rust", fresh_name=_fresh_name
+    )
+    lowered = PLUGIN.lower(claimed, one_operand_ctx)
+    assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&h)?"
+
+    core_direct_ctx = replace(
+        one_operand_ctx, operands=("h", "axis_must_not_reach_runtime")
+    )
+    lowered_direct = PLUGIN.lower(claimed, core_direct_ctx)
+    assert lowered_direct.rust == lowered.rust
+    assert "axis_must_not_reach_runtime" not in lowered_direct.rust
+
+
+@pytest.mark.parametrize(
+    "operand_literals",
+    (
+        (),
+        (ClaimLiteral(is_literal=False),),
+        (
+            ClaimLiteral(is_literal=False),
+            ClaimLiteral(is_literal=False),
+        ),
+        (
+            ClaimLiteral(is_literal=False),
+            ClaimLiteral(is_literal=True, value=True),
+        ),
+    ),
+)
+def test_lower_rejects_forged_positional_axis_alignment(
+    operand_literals: tuple[ClaimLiteral, ...],
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.reduce_sum",
+        operand_types=(TENSOR_F32_CPU_2D, "int"),
+        operand_literals=operand_literals,
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=SUM_GENERAL_RULE,
+        result_type=TENSOR_F32_CPU_1D,
+    )
+    with pytest.raises(ValueError, match="positional axis"):
+        PLUGIN.lower(
+            claimed,
+            LoweringContext(
+                operands=("h",), target_language="rust", fresh_name=_fresh_name
+            ),
+        )
+
+
+@pytest.mark.parametrize(
     ("target", "rule", "result_type", "helper"),
     (
         ("tensorflow.nn.softmax", SOFTMAX_RULE, TENSOR_F32_CPU_2D, "softmax_axis1"),
@@ -283,6 +447,64 @@ def test_lower_classification_head(target: str, rule: str, result_type: str, hel
     assert "TF_INT64" in runtime_module_helpers()
 
 
+@pytest.mark.parametrize(
+    ("target", "axis", "rule", "result_type", "helper"),
+    (
+        (
+            "tensorflow.nn.softmax",
+            1,
+            SOFTMAX_RULE,
+            TENSOR_F32_CPU_2D,
+            "softmax_axis1",
+        ),
+        (
+            "tensorflow.argmax",
+            0,
+            ARGMAX_AXIS0_RULE,
+            TENSOR_I64_CPU_1D,
+            "argmax_axis0",
+        ),
+        (
+            "tensorflow.argmax",
+            1,
+            ARGMAX_RULE,
+            TENSOR_I64_CPU_1D,
+            "argmax_axis1",
+        ),
+    ),
+)
+def test_lower_classification_positional_axis_is_metadata_only(
+    target: str,
+    axis: int,
+    rule: str,
+    result_type: str,
+    helper: str,
+) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target=target,
+        operand_types=(TENSOR_F32_CPU_2D, "int"),
+        operand_literals=(
+            ClaimLiteral(is_literal=False),
+            ClaimLiteral(is_literal=True, value=axis),
+        ),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=rule,
+        result_type=result_type,
+    )
+    ctx = LoweringContext(
+        operands=("h",), target_language="rust", fresh_name=_fresh_name
+    )
+    lowered = PLUGIN.lower(claimed, ctx)
+    assert lowered.rust == f"rextio_tensorflow_runtime::{helper}(&h)?"
+    lowered_direct = PLUGIN.lower(
+        claimed, replace(ctx, operands=("h", "axis_must_not_reach_runtime"))
+    )
+    assert lowered_direct.rust == lowered.rust
+
+
 def test_classification_lower_revalidates_default_int64_contract() -> None:
     claimed = ClaimSite(
         kind="call",
@@ -299,7 +521,7 @@ def test_classification_lower_revalidates_default_int64_contract() -> None:
             ),
         ),
     )
-    with pytest.raises(ValueError, match="axis=1"):
+    with pytest.raises(ValueError, match="malformed argmax"):
         PLUGIN.lower(
             claimed,
             LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),

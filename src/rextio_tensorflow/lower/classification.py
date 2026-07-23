@@ -5,6 +5,7 @@ from __future__ import annotations
 from rextio.plugins.api import ClaimSite, LoweredExpr, LoweringContext
 
 from rextio_tensorflow.claim.classification import (
+    ARGMAX_AXIS0_RULE,
     ARGMAX_RULE,
     ARGMAX_TARGETS,
     SOFTMAX_RULE,
@@ -17,22 +18,46 @@ from rextio_tensorflow.diagnostics import (
 from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
 
 
-def _axis_one(claimed: ClaimSite, operation: str) -> None:
+def _literal_axis(claimed: ClaimSite, operation: str) -> int:
     values = {keyword.name: keyword.literal for keyword in claimed.keywords}
-    if len(values) != len(claimed.keywords) or set(values) != {"axis"}:
+    if len(values) != len(claimed.keywords):
         raise ValueError(
-            f"rextio-tensorflow {operation} lower requires only axis=1 literal"
+            f"rextio-tensorflow {operation} lower rejects duplicate axis/keyword metadata"
         )
-    axis = values["axis"]
+    if len(claimed.operand_types) == 1:
+        if set(values) != {"axis"}:
+            raise ValueError(
+                f"rextio-tensorflow {operation} lower requires only one literal axis keyword"
+            )
+        axis = values["axis"]
+    elif len(claimed.operand_types) == 2:
+        if values:
+            raise ValueError(
+                f"rextio-tensorflow {operation} lower positional axis accepts no keywords"
+            )
+        if (
+            claimed.operand_types[1] != "int"
+            or len(claimed.operand_literals) != 2
+        ):
+            raise ValueError(
+                f"rextio-tensorflow {operation} lower positional axis metadata is not aligned"
+            )
+        axis = claimed.operand_literals[1]
+    else:
+        raise ValueError(
+            f"rextio-tensorflow {operation} lower positional axis arity is invalid"
+        )
     if (
         not axis.is_literal
         or not isinstance(axis.value, int)
         or isinstance(axis.value, bool)
-        or axis.value != 1
+        or axis.value not in {0, 1}
     ):
         raise ValueError(
-            f"rextio-tensorflow {operation} lower requires axis=1 literal; got {axis.value!r}"
+            f"rextio-tensorflow {operation} lower requires axis=0 or axis=1 literal; "
+            f"got {axis.value!r}"
         )
+    return axis.value
 
 
 def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
@@ -41,21 +66,28 @@ def try_lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr | None:
         return None
     if claimed.receiver is not None or ctx.receiver is not None:
         raise ValueError("rextio-tensorflow functional classification lower forbids receivers")
-    if len(claimed.operand_types) != 1 or claimed.operand_types[0] != TENSOR_F32_CPU_2D:
+    if not claimed.operand_types or claimed.operand_types[0] != TENSOR_F32_CPU_2D:
         raise ValueError("rextio-tensorflow classification lower requires rank-2 float32 input")
-    if len(ctx.operands) != 1:
-        raise ValueError("rextio-tensorflow classification lower requires one ctx.operands entry")
-    (x,) = ctx.operands
+    if len(ctx.operands) not in {1, len(claimed.operand_types)}:
+        raise ValueError(
+            "rextio-tensorflow classification lower requires the tensor operand; "
+            "a positional literal axis is metadata-only"
+        )
+    x = ctx.operands[0]
+    axis = _literal_axis(claimed, "classification")
     if claimed.target in SOFTMAX_TARGETS:
         if claimed.rule_id != SOFTMAX_RULE or claimed.result_type != TENSOR_F32_CPU_2D:
             raise ValueError("rextio-tensorflow received malformed softmax lower metadata")
-        _axis_one(claimed, "softmax")
+        if axis != 1:
+            raise ValueError(
+                "rextio-tensorflow softmax lower supports only final rank-2 axis=1"
+            )
         helper = "softmax_axis1"
     else:
-        if claimed.rule_id != ARGMAX_RULE or claimed.result_type != TENSOR_I64_CPU_1D:
+        expected_rule = ARGMAX_AXIS0_RULE if axis == 0 else ARGMAX_RULE
+        if claimed.rule_id != expected_rule or claimed.result_type != TENSOR_I64_CPU_1D:
             raise ValueError("rextio-tensorflow received malformed argmax lower metadata")
-        _axis_one(claimed, "argmax")
-        helper = "argmax_axis1"
+        helper = f"argmax_axis{axis}"
     return LoweredExpr(
         rust=f"rextio_tensorflow_runtime::{helper}(&{x})?",
         helpers=(runtime_module_helpers(),),
