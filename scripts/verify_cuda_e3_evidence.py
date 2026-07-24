@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Offline verifier for the non-certifying TensorFlow CUDA E3 evidence envelope.
+"""Offline schema and integrity verifier for TensorFlow CUDA E3 evidence.
 
-This deliberately verifies evidence metadata only; it never imports TensorFlow,
-loads an extension, or attempts to infer CUDA kernel activity.
+Verification proves only that a document is canonical, internally untampered,
+and conforms to this closed first-stage evidence schema. The payload SHA-256 is
+an integrity checksum; it is not authentication, execution proof, hardware
+certification, or independent validation of the producer's self-attestations.
+The verifier never imports TensorFlow, loads artifacts, shells out, or reads a
+source checkout.
 """
 
 from __future__ import annotations
@@ -12,46 +16,97 @@ import hashlib
 import json
 import math
 import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-MAX_BYTES = 65_536
+MAX_BYTES = 131_072
 MAX_DEPTH = 12
+MAX_STRING = 512
+MAX_ARTIFACT_BYTES = 2**40
+ATOL = 1e-5
+RTOL = 1e-5
+
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
-SAFE_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+\-]{0,239}$")
-FORBIDDEN_TEXT = re.compile(
-    r"(?:https?://|file://|(?:token|password|secret|apikey|api_key|authorization)\s*[=:])",
+SAFE_RELATIVE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+\-]{0,239}$")
+BUILD_ID = re.compile(r"^[0-9a-f]{8,128}$")
+URL = re.compile(r"(?:https?|file)://", re.IGNORECASE)
+WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+CREDENTIAL = re.compile(
+    r"(?:"
+    r"(?:token|password|passwd|secret|api[_-]?key|authorization|bearer)\s*[:=]"
+    r"|gh[pousr]_[A-Za-z0-9]{20,}"
+    r"|AKIA[A-Z0-9]{16}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r")",
     re.IGNORECASE,
 )
 
-CORE = "7f47f0ce8cea0b6dbeb7fd3c733f65eeaa6bb5e0"
-PROVIDER = "cf65733f06b91a801f9806367f09948ee7162540"
-BASE_PLUGIN = "16e368a"
-OPS = ["tf.matmul", "tf.nn.bias_add", "tf.nn.relu", "tf.reduce_mean-axis1"]
-SMS = {"sm_60", "sm_61", "sm_70", "sm_72", "sm_75", "sm_80", "sm_86", "sm_87", "sm_89", "sm_90"}
+CORE_COMMIT = "7f47f0ce8cea0b6dbeb7fd3c733f65eeaa6bb5e0"
+PROVIDER_COMMIT = "cf65733f06b91a801f9806367f09948ee7162540"
+BASE_CANDIDATE_COMMIT = "16e368a2e73be58d4cc51da1672a8a842e394fbd"
+OPERATIONS = [
+    "tf.matmul",
+    "tf.nn.bias_add",
+    "tf.nn.relu",
+    "tf.reduce_mean-axis1",
+]
+SMS = {
+    "sm_60",
+    "sm_61",
+    "sm_70",
+    "sm_72",
+    "sm_75",
+    "sm_80",
+    "sm_86",
+    "sm_87",
+    "sm_89",
+    "sm_90",
+}
+ARTIFACT_ROLES = {
+    "provider_probe",
+    "harness_script",
+    "verifier_script",
+    "generated_lib_rs",
+    "generated_cargo_toml",
+    "generated_cargo_lock",
+    "native_extension",
+}
+RUNTIME_IMAGES = {
+    "tensorflow_cc": "tensorflow/libtensorflow_cc.so.2",
+    "tensorflow_framework": "tensorflow/libtensorflow_framework.so.2",
+    "pywrap_tensorflow_common": "tensorflow/python/lib_pywrap_tensorflow_common.so",
+}
 
 
 class EvidenceError(ValueError):
-    """Raised when an evidence envelope is not a claim this verifier accepts."""
+    """Raised when evidence fails canonical schema and integrity verification."""
 
 
 def canonical_json(value: Any) -> str:
-    """Return the sole canonical encoding used for payload hashing."""
+    """Return the canonical JSON text used by the evidence format."""
     return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
     )
 
 
+def canonical_bytes(envelope: Any) -> bytes:
+    """Return the one accepted evidence encoding, including one final newline."""
+    return canonical_json(envelope).encode("ascii") + b"\n"
+
+
 def payload_sha256(payload: dict[str, Any]) -> str:
-    """Return SHA-256 of the canonical, non-circular evidence payload."""
+    """Hash only the canonical payload, avoiding a circular envelope hash."""
     return hashlib.sha256(canonical_json(payload).encode("ascii")).hexdigest()
 
 
 def sha256_file(path: Path) -> str:
-    """Hash an artifact without loading it all into memory."""
+    """Hash a producer-selected file without loading it all into memory."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(65_536), b""):
@@ -59,32 +114,77 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def sanitized_wheel_relative(path: str) -> str:
-    """Validate and return a wheel-relative runtime image name, never a host path."""
-    _wheel_path(path, "wheel-relative path")
-    return path
+def sanitized_relative_label(value: str) -> str:
+    """Validate and return a non-secret relative artifact label."""
+    text = _string(value, "relative label", pattern=SAFE_RELATIVE)
+    if text.startswith("/") or ".." in text.split("/") or text.endswith("/"):
+        raise EvidenceError("relative label must be a sanitized relative value")
+    return text
+
+
+def sanitized_wheel_relative(value: str) -> str:
+    """Validate and return a path relative to a TensorFlow wheel root."""
+    text = sanitized_relative_label(value)
+    if not text.startswith("tensorflow/"):
+        raise EvidenceError("runtime image path must be relative to the tensorflow/ wheel root")
+    return text
 
 
 def make_envelope(payload: dict[str, Any]) -> dict[str, Any]:
-    """Create a canonical, non-circular envelope for a validated-style payload."""
-    return {"schema_version": 1, "payload": payload, "payload_sha256": payload_sha256(payload)}
+    """Create the non-circular evidence envelope around a payload."""
+    return {
+        "schema_version": 1,
+        "payload": payload,
+        "payload_sha256": payload_sha256(payload),
+    }
 
 
-def _closed(value: Any, expected: dict[str, Any], where: str = "payload") -> None:
+def _closed(value: Any, fields: set[str], where: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise EvidenceError(f"{where} must be an object")
-    actual = set(value)
-    wanted = set(expected)
-    if actual != wanted:
-        raise EvidenceError(f"{where} has unknown or missing fields: {sorted(actual ^ wanted)}")
+    difference = set(value) ^ fields
+    if difference:
+        raise EvidenceError(f"{where} has unknown or missing fields: {sorted(difference)}")
+    return value
 
 
-def _string(value: Any, where: str, *, pattern: re.Pattern[str] | None = None) -> str:
+def _strict_equal(value: Any, expected: Any) -> bool:
+    """Compare JSON values without Python's bool/int or int/float coercions."""
+    if type(value) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(value) == set(expected) and all(
+            _strict_equal(value[key], item) for key, item in expected.items()
+        )
+    if isinstance(expected, list):
+        return len(value) == len(expected) and all(
+            _strict_equal(actual, item) for actual, item in zip(value, expected, strict=True)
+        )
+    return bool(value == expected)
+
+
+def _safe_text(value: str, where: str) -> None:
+    if len(value) > MAX_STRING:
+        raise EvidenceError(f"{where} exceeds the string-size bound")
+    if (
+        value.startswith("/")
+        or WINDOWS_ABSOLUTE.search(value)
+        or URL.search(value)
+        or CREDENTIAL.search(value)
+    ):
+        raise EvidenceError(f"{where} contains an absolute path, URL, or credential-looking value")
+
+
+def _string(
+    value: Any,
+    where: str,
+    *,
+    pattern: re.Pattern[str] | None = None,
+) -> str:
     if not isinstance(value, str) or not value:
         raise EvidenceError(f"{where} must be a non-empty string")
-    if len(value) > 512 or FORBIDDEN_TEXT.search(value):
-        raise EvidenceError(f"{where} contains a path, URL, or credential-looking value")
-    if pattern and not pattern.fullmatch(value):
+    _safe_text(value, where)
+    if pattern is not None and pattern.fullmatch(value) is None:
         raise EvidenceError(f"{where} has invalid format")
     return value
 
@@ -95,263 +195,441 @@ def _finite(value: Any, where: str) -> float:
     return float(value)
 
 
-def _wheel_path(value: Any, where: str) -> None:
-    text = _string(value, where, pattern=SAFE_PATH)
-    if text.startswith("/") or ".." in text.split("/") or not text.startswith("rextio_tensorflow/"):
-        raise EvidenceError(f"{where} must be a sanitized wheel-relative runtime image")
+def _positive_size(value: Any, where: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= MAX_ARTIFACT_BYTES:
+        raise EvidenceError(f"{where} must be a bounded positive integer")
 
 
-def _descends_from_base(commit: str) -> None:
-    try:
-        completed = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", BASE_PLUGIN, commit],
-            cwd=Path(__file__).resolve().parents[1],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError as exc:
-        raise EvidenceError("cannot verify plugin candidate ancestry") from exc
-    if completed.returncode != 0:
-        raise EvidenceError(f"plugin candidate is not a descendant of {BASE_PLUGIN}")
-
-
-def _validate_depth(value: Any, depth: int = 0) -> None:
+def _walk_constraints(value: Any, where: str = "evidence", depth: int = 0) -> None:
     if depth > MAX_DEPTH:
         raise EvidenceError("evidence exceeds maximum nesting depth")
     if isinstance(value, dict):
         for key, item in value.items():
             if not isinstance(key, str):
                 raise EvidenceError("JSON object keys must be strings")
-            _validate_depth(item, depth + 1)
+            _safe_text(key, f"{where} key")
+            _walk_constraints(item, f"{where}.{key}", depth + 1)
     elif isinstance(value, list):
-        for item in value:
-            _validate_depth(item, depth + 1)
+        for index, item in enumerate(value):
+            _walk_constraints(item, f"{where}[{index}]", depth + 1)
+    elif isinstance(value, str):
+        _safe_text(value, where)
     elif isinstance(value, float) and not math.isfinite(value):
-        raise EvidenceError("evidence contains non-finite numeric value")
+        raise EvidenceError(f"{where} contains a non-finite number")
+    elif value is not None and not isinstance(value, (bool, int, float)):
+        raise EvidenceError(f"{where} contains a non-JSON value")
 
 
-def validate_envelope(envelope: Any) -> dict[str, Any]:
-    """Strictly validate an E3 evidence envelope and return its payload."""
-    _validate_depth(envelope)
-    _closed(envelope, {"schema_version": None, "payload": None, "payload_sha256": None}, "envelope")
-    if envelope["schema_version"] != 1:
-        raise EvidenceError("unsupported evidence schema_version")
-    payload = envelope["payload"]
-    if not isinstance(payload, dict):
-        raise EvidenceError("envelope.payload must be an object")
-    claimed_hash = _string(envelope["payload_sha256"], "payload_sha256", pattern=HEX64)
-    if claimed_hash != payload_sha256(payload):
-        raise EvidenceError("payload_sha256 does not match canonical payload")
-
-    _closed(
-        payload,
+def _validate_contract(payload: dict[str, Any]) -> None:
+    contract = _closed(
+        payload["contract"],
         {
-            "contract": None,
-            "package": None,
-            "environment": None,
-            "source": None,
-            "artifacts": None,
-            "runtime_images": None,
-            "orchestration": None,
-            "invariants": None,
+            "evidence_schema",
+            "verification_scope",
+            "producer_assertions",
+            "support_claim",
+            "certification_ready",
+            "plugin_api",
         },
+        "payload.contract",
     )
-    c = payload["contract"]
-    _closed(c, {"support_claim": None, "certification_ready": None, "plugin_api": None})
-    if c != {"support_claim": False, "certification_ready": False, "plugin_api": "1.6"}:
+    expected = {
+        "evidence_schema": "tensorflow-cuda-e3-real-nvidia-v1",
+        "verification_scope": "schema-and-integrity-only",
+        "producer_assertions": "self-attested-by-manual-harness",
+        "support_claim": False,
+        "certification_ready": False,
+        "plugin_api": "1.6",
+    }
+    if not _strict_equal(contract, expected):
         raise EvidenceError(
-            "contract must retain support_claim=false and certification_ready=false"
+            "contract must identify self-attested schema/integrity evidence "
+            "with support_claim=false and certification_ready=false"
         )
-    package = payload["package"]
-    _closed(package, {"name": None, "version": None})
-    if package != {"name": "rextio-tensorflow", "version": "0.1.2"}:
-        raise EvidenceError("package binding does not match the E3 candidate")
-    e = payload["environment"]
-    _closed(
-        e,
-        {
-            "os": None,
-            "arch": None,
-            "libc": None,
-            "python": None,
-            "tensorflow": None,
-            "rust": None,
-            "gpu": None,
-        },
+
+
+def _validate_identity(payload: dict[str, Any]) -> None:
+    package = _closed(
+        payload["package"],
+        {"distribution", "version", "plugin_module", "native_module"},
+        "payload.package",
     )
-    if {k: e[k] for k in ("os", "arch", "libc", "python", "tensorflow", "rust")} != {
+    if not _strict_equal(
+        package,
+        {
+            "distribution": "rextio-tensorflow",
+            "version": "0.1.2",
+            "plugin_module": "rextio_tensorflow.plugin",
+            "native_module": "cuda_app._rextio_native",
+        },
+    ):
+        raise EvidenceError("package or module identity does not match the E3 candidate")
+
+    source = _closed(
+        payload["source"],
+        {
+            "core_commit",
+            "core_clean",
+            "provider_commit",
+            "provider_clean",
+            "plugin_commit",
+            "plugin_clean",
+            "base_candidate_commit",
+            "plugin_ancestry_checked",
+        },
+        "payload.source",
+    )
+    if (
+        source["core_commit"] != CORE_COMMIT
+        or source["provider_commit"] != PROVIDER_COMMIT
+        or source["base_candidate_commit"] != BASE_CANDIDATE_COMMIT
+    ):
+        raise EvidenceError("source commit bindings do not match the frozen E3 contract")
+    _string(source["plugin_commit"], "payload.source.plugin_commit", pattern=GIT_SHA)
+    for field in (
+        "core_clean",
+        "provider_clean",
+        "plugin_clean",
+        "plugin_ancestry_checked",
+    ):
+        if source[field] is not True:
+            raise EvidenceError(f"payload.source.{field} must be self-attested true")
+
+
+def _validate_environment(payload: dict[str, Any]) -> None:
+    environment = _closed(
+        payload["environment"],
+        {
+            "os",
+            "arch",
+            "libc",
+            "python_implementation",
+            "python_version",
+            "tensorflow_version",
+            "cuda_driver_version",
+            "gpu",
+        },
+        "payload.environment",
+    )
+    fixed = {
         "os": "Linux",
         "arch": "x86_64",
         "libc": "GNU",
-        "python": "3.11",
-        "tensorflow": "2.21.0",
-        "rust": "1.93.1",
-    }:
-        raise EvidenceError("environment does not match the exact E3 platform contract")
-    _closed(e["gpu"], {"ordinal": None, "compute_capability": None})
-    if e["gpu"]["ordinal"] != 0 or e["gpu"]["compute_capability"] not in SMS:
+        "python_implementation": "CPython",
+        "python_version": "3.11",
+        "tensorflow_version": "2.21.0",
+    }
+    if any(environment[key] != value for key, value in fixed.items()):
+        raise EvidenceError("environment does not match the exact E3 platform/runtime contract")
+    driver = environment["cuda_driver_version"]
+    if isinstance(driver, bool) or not isinstance(driver, int) or not 12_000 <= driver <= 999_999:
+        raise EvidenceError("cuda_driver_version must be an integer at least 12000")
+    gpu = _closed(environment["gpu"], {"ordinal", "sm"}, "payload.environment.gpu")
+    if type(gpu["ordinal"]) is not int or gpu["ordinal"] != 0 or gpu["sm"] not in SMS:
         raise EvidenceError("GPU must be ordinal 0 with an allowed SM")
-    s = payload["source"]
-    _closed(
-        s,
-        {
-            "core_commit": None,
-            "provider_commit": None,
-            "plugin_commit": None,
-            "repository_clean": None,
-        },
+
+    toolchain = _closed(
+        payload["toolchain"],
+        {"rustc_version", "cargo_version", "target"},
+        "payload.toolchain",
     )
-    if (
-        s["core_commit"] != CORE
-        or s["provider_commit"] != PROVIDER
-        or s["repository_clean"] is not True
+    if not _strict_equal(
+        toolchain,
+        {
+            "rustc_version": "1.93.1",
+            "cargo_version": "1.93.1",
+            "target": "x86_64-unknown-linux-gnu",
+        },
     ):
-        raise EvidenceError("source bindings are not exact or clean")
-    plugin_commit = _string(s["plugin_commit"], "source.plugin_commit", pattern=GIT_SHA)
-    _descends_from_base(plugin_commit)
+        raise EvidenceError("toolchain does not match the exact E3 contract")
+
+
+def _validate_artifacts(payload: dict[str, Any]) -> None:
     artifacts = payload["artifacts"]
-    if not isinstance(artifacts, list) or len(artifacts) != 3:
-        raise EvidenceError("artifacts must contain exactly three hashed artifacts")
-    expected_artifacts = {"plugin_wheel", "native_extension", "generated_rust"}
-    seen: set[str] = set()
-    for artifact in artifacts:
-        _closed(
-            artifact,
-            {"kind": None, "wheel_path": None, "sha256": None, "size_bytes": None},
-            "artifact",
+    if not isinstance(artifacts, list) or len(artifacts) != len(ARTIFACT_ROLES):
+        raise EvidenceError("artifacts must contain the exact seven roles")
+    roles: set[str] = set()
+    for index, artifact_value in enumerate(artifacts):
+        artifact = _closed(
+            artifact_value,
+            {"role", "label", "sha256", "size_bytes"},
+            f"payload.artifacts[{index}]",
         )
-        kind = _string(artifact["kind"], "artifact.kind")
-        seen.add(kind)
-        _wheel_path(artifact["wheel_path"], "artifact.wheel_path")
-        _string(artifact["sha256"], "artifact.sha256", pattern=HEX64)
-        if (
-            isinstance(artifact["size_bytes"], bool)
-            or not isinstance(artifact["size_bytes"], int)
-            or not 0 < artifact["size_bytes"] <= 2**31
-        ):
-            raise EvidenceError("artifact.size_bytes must be a bounded positive integer")
-    if seen != expected_artifacts:
-        raise EvidenceError("artifact kinds are incomplete or duplicated")
+        role = _string(artifact["role"], f"payload.artifacts[{index}].role")
+        if role in roles:
+            raise EvidenceError(f"duplicate artifact role: {role}")
+        roles.add(role)
+        sanitized_relative_label(artifact["label"])
+        _string(
+            artifact["sha256"],
+            f"payload.artifacts[{index}].sha256",
+            pattern=HEX64,
+        )
+        _positive_size(artifact["size_bytes"], f"payload.artifacts[{index}].size_bytes")
+    if roles != ARTIFACT_ROLES:
+        raise EvidenceError("artifact roles do not match the exact required set")
+
     images = payload["runtime_images"]
-    if not isinstance(images, list) or not 1 <= len(images) <= 8:
-        raise EvidenceError("runtime_images must be a non-empty bounded list")
-    for image in images:
-        _wheel_path(image, "runtime_images item")
-    o = payload["orchestration"]
-    _closed(
-        o,
+    if not isinstance(images, list) or len(images) != len(RUNTIME_IMAGES):
+        raise EvidenceError("runtime_images must contain exactly three TensorFlow DSOs")
+    image_roles: set[str] = set()
+    for index, image_value in enumerate(images):
+        image = _closed(
+            image_value,
+            {"role", "wheel_path", "sha256", "size_bytes", "build_id", "mapped"},
+            f"payload.runtime_images[{index}]",
+        )
+        role = _string(image["role"], f"payload.runtime_images[{index}].role")
+        if role in image_roles:
+            raise EvidenceError(f"duplicate runtime image role: {role}")
+        image_roles.add(role)
+        if role not in RUNTIME_IMAGES:
+            raise EvidenceError(f"unknown runtime image role: {role}")
+        path = sanitized_wheel_relative(image["wheel_path"])
+        if path != RUNTIME_IMAGES[role]:
+            raise EvidenceError(f"runtime image {role} has the wrong wheel-relative path")
+        _string(
+            image["sha256"],
+            f"payload.runtime_images[{index}].sha256",
+            pattern=HEX64,
+        )
+        _positive_size(
+            image["size_bytes"],
+            f"payload.runtime_images[{index}].size_bytes",
+        )
+        build_id = image["build_id"]
+        if build_id is not None:
+            _string(
+                build_id,
+                f"payload.runtime_images[{index}].build_id",
+                pattern=BUILD_ID,
+            )
+        if image["mapped"] is not True:
+            raise EvidenceError(f"runtime image {role} must be self-attested mapped=true")
+    if image_roles != set(RUNTIME_IMAGES):
+        raise EvidenceError("runtime image roles do not match the exact required set")
+
+
+def _validate_orchestration(payload: dict[str, Any]) -> None:
+    orchestration = _closed(
+        payload["orchestration"],
         {
-            "provider_id": None,
-            "capability_id": None,
-            "device": None,
-            "input_residency": None,
-            "dtype": None,
-            "ranks": None,
-            "operations": None,
+            "provider_id",
+            "capability_id",
+            "device",
+            "input_residency",
+            "dtype",
+            "ranks",
+            "operations",
+            "artifact_profile_sha256",
+            "authorization_sha256",
+            "provider_lock_sha256",
+            "probe_sha256",
+            "observations_sha256",
         },
+        "payload.orchestration",
     )
-    if o != {
+    fixed = {
         "provider_id": "rextio-device-cuda",
         "capability_id": "cuda-tensorflow-tfe-linux-x86_64",
         "device": "cuda:0",
         "input_residency": "device",
         "dtype": "float32",
         "ranks": [1, 2],
-        "operations": OPS,
-    }:
+        "operations": OPERATIONS,
+    }
+    if any(not _strict_equal(orchestration[key], value) for key, value in fixed.items()):
         raise EvidenceError("orchestration does not match the exact E3 slice")
-    i = payload["invariants"]
-    _closed(
-        i,
-        {
-            "execution": None,
-            "numerical": None,
-            "device": None,
-            "lifetime": None,
-            "negative_boundary": None,
-        },
+    for field in (
+        "artifact_profile_sha256",
+        "authorization_sha256",
+        "provider_lock_sha256",
+        "probe_sha256",
+        "observations_sha256",
+    ):
+        _string(orchestration[field], f"payload.orchestration.{field}", pattern=HEX64)
+
+
+def _validate_invariants(payload: dict[str, Any]) -> None:
+    invariants = _closed(
+        payload["invariants"],
+        {"execution", "numerical", "output", "lifetime", "negative_boundary"},
+        "payload.invariants",
     )
-    _closed(
-        i["execution"],
+    execution = _closed(
+        invariants["execution"],
         {
-            "native_extension_executed": None,
-            "kernel_activity_verified": None,
-            "runtime_transfer_profiled": None,
+            "native_extension_executed",
+            "kernel_activity_verified",
+            "runtime_transfer_profiled",
+            "runtime_provenance_checked",
         },
+        "payload.invariants.execution",
     )
-    if i["execution"] != {
-        "native_extension_executed": True,
-        "kernel_activity_verified": False,
-        "runtime_transfer_profiled": False,
-    }:
-        raise EvidenceError(
-            "first-stage evidence may execute the extension but cannot claim kernel or transfer profiling"
-        )
-    _closed(
-        i["numerical"],
+    if not _strict_equal(
+        execution,
         {
-            "reference": None,
-            "atol": None,
-            "rtol": None,
-            "max_abs_error": None,
-            "max_rel_error": None,
+            "native_extension_executed": True,
+            "kernel_activity_verified": False,
+            "runtime_transfer_profiled": False,
+            "runtime_provenance_checked": True,
         },
+    ):
+        raise EvidenceError("first-stage execution must not claim kernel or transfer profiling")
+
+    numerical = _closed(
+        invariants["numerical"],
+        {"reference", "atol", "rtol", "max_scaled_error"},
+        "payload.invariants.numerical",
     )
-    n = i["numerical"]
     if (
-        n["reference"] != "tensorflow-eager"
-        or _finite(n["atol"], "atol") != 1e-5
-        or _finite(n["rtol"], "rtol") != 1e-5
+        numerical["reference"] != "tensorflow-eager"
+        or _finite(numerical["atol"], "payload.invariants.numerical.atol") != ATOL
+        or _finite(numerical["rtol"], "payload.invariants.numerical.rtol") != RTOL
     ):
         raise EvidenceError("numerical tolerances must be the exact approved values")
-    if (
-        not 0 <= _finite(n["max_abs_error"], "max_abs_error") <= n["atol"]
-        or not 0 <= _finite(n["max_rel_error"], "max_rel_error") <= n["rtol"]
-    ):
-        raise EvidenceError("numerical errors exceed declared tolerances")
-    _closed(i["device"], {"inputs_on_gpu": None, "output_on_gpu": None, "gpu_ordinal": None})
-    if i["device"] != {"inputs_on_gpu": True, "output_on_gpu": True, "gpu_ordinal": 0}:
-        raise EvidenceError("device invariant is incomplete")
-    _closed(i["lifetime"], {"borrowed_inputs_alive": None, "no_host_fallback_observed": None})
-    if i["lifetime"] != {"borrowed_inputs_alive": True, "no_host_fallback_observed": True}:
-        raise EvidenceError("lifetime invariant is incomplete")
-    _closed(
-        i["negative_boundary"],
-        {
-            "unsupported_dtype_rejected": None,
-            "rank_rejected": None,
-            "device_ordinal_rejected": None,
-            "operation_rejected": None,
-        },
+    scaled = _finite(
+        numerical["max_scaled_error"],
+        "payload.invariants.numerical.max_scaled_error",
     )
-    if any(value is not True for value in i["negative_boundary"].values()):
-        raise EvidenceError("negative boundary checks are incomplete")
+    if not 0 <= scaled <= 1:
+        raise EvidenceError("max_scaled_error must be in the closed interval [0, 1]")
+
+    output = _closed(
+        invariants["output"],
+        {"device", "dtype", "rank", "shape"},
+        "payload.invariants.output",
+    )
+    if not _strict_equal(
+        output,
+        {"device": "GPU:0", "dtype": "float32", "rank": 1, "shape": [4]},
+    ):
+        raise EvidenceError("output must be exact GPU:0 float32 rank-1 shape [4]")
+
+    lifetime = _closed(
+        invariants["lifetime"],
+        {"inputs_unchanged", "output_survives_input_gc", "repeated_calls"},
+        "payload.invariants.lifetime",
+    )
+    if not _strict_equal(
+        lifetime,
+        {
+            "inputs_unchanged": True,
+            "output_survives_input_gc": True,
+            "repeated_calls": True,
+        },
+    ):
+        raise EvidenceError("lifetime and repetition invariants are incomplete")
+
+    negatives = _closed(
+        invariants["negative_boundary"],
+        {
+            "cpu_input_rejected",
+            "float64_rejected",
+            "wrong_rank_rejected",
+            "watched_tape_rejected",
+            "forward_accumulator_rejected",
+        },
+        "payload.invariants.negative_boundary",
+    )
+    if any(value is not True for value in negatives.values()):
+        raise EvidenceError("negative boundary self-attestations are incomplete")
+
+
+def validate_envelope(envelope: Any) -> dict[str, Any]:
+    """Verify the closed schema and payload checksum; return the payload.
+
+    This verifies schema and internal integrity only. It intentionally does not
+    authenticate the producer, recompute artifact hashes, or prove execution.
+    """
+    _walk_constraints(envelope)
+    document = _closed(
+        envelope,
+        {"schema_version", "payload", "payload_sha256"},
+        "envelope",
+    )
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise EvidenceError("unsupported evidence schema_version")
+    payload = document["payload"]
+    if not isinstance(payload, dict):
+        raise EvidenceError("envelope.payload must be an object")
+    claimed_hash = _string(
+        document["payload_sha256"],
+        "envelope.payload_sha256",
+        pattern=HEX64,
+    )
+    if claimed_hash != payload_sha256(payload):
+        raise EvidenceError("payload_sha256 does not match the canonical payload")
+
+    _closed(
+        payload,
+        {
+            "contract",
+            "package",
+            "source",
+            "environment",
+            "toolchain",
+            "artifacts",
+            "runtime_images",
+            "orchestration",
+            "invariants",
+        },
+        "payload",
+    )
+    _validate_contract(payload)
+    _validate_identity(payload)
+    _validate_environment(payload)
+    _validate_artifacts(payload)
+    _validate_orchestration(payload)
+    _validate_invariants(payload)
     return payload
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run the evidence verifier command-line interface."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("evidence", type=Path, help="path to a CUDA E3 evidence JSON envelope")
-    args = parser.parse_args(argv)
+def validate_document(raw: bytes) -> dict[str, Any]:
+    """Verify canonical raw bytes plus the closed schema and integrity checksum."""
+    if len(raw) > MAX_BYTES:
+        raise EvidenceError("evidence exceeds maximum size")
     try:
-        raw = args.evidence.read_bytes()
-        if len(raw) > MAX_BYTES:
-            raise EvidenceError("evidence exceeds maximum size")
+        text = raw.decode("utf-8")
         envelope = json.loads(
-            raw.decode("utf-8"),
+            text,
             parse_constant=lambda value: (_ for _ in ()).throw(
                 EvidenceError(f"non-finite JSON value {value}")
             ),
         )
-        payload = validate_envelope(envelope)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, EvidenceError) as exc:
-        print(f"evidence verification failed: {exc}", file=sys.stderr)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EvidenceError(f"malformed evidence JSON: {exc}") from exc
+    try:
+        expected = canonical_bytes(envelope)
+    except (TypeError, ValueError) as exc:
+        raise EvidenceError(f"evidence cannot be canonicalized: {exc}") from exc
+    if raw != expected:
+        raise EvidenceError("evidence bytes are not canonical JSON with exactly one final newline")
+    return validate_envelope(envelope)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the offline schema and integrity verifier CLI."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "evidence",
+        type=Path,
+        help="canonical CUDA E3 evidence JSON path",
+    )
+    args = parser.parse_args(argv)
+    try:
+        payload = validate_document(args.evidence.read_bytes())
+    except (OSError, EvidenceError) as exc:
+        print(f"evidence schema/integrity verification failed: {exc}", file=sys.stderr)
         return 1
     print(
         canonical_json(
-            {"sha256": payload_sha256(payload), "support_claim": False, "verified": True}
+            {
+                "certification_ready": False,
+                "payload_sha256": payload_sha256(payload),
+                "schema_verified": True,
+                "support_claim": False,
+            }
         )
     )
     return 0
