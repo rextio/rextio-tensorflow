@@ -51,6 +51,8 @@ RUNTIME_IMAGES = {
     "tensorflow_framework": "tensorflow/libtensorflow_framework.so.2",
     "pywrap_tensorflow_common": "tensorflow/python/lib_pywrap_tensorflow_common.so",
 }
+ATOL = 1e-5
+RTOL = 1e-5
 
 
 @dataclass(frozen=True)
@@ -275,11 +277,21 @@ def execution_invariants(result: ExecutionResult) -> dict[str, Any]:
     """Translate observed execution facts into the verifier's closed shape."""
     return {
         "execution": {"native_extension_executed": result.native_extension_executed, "kernel_activity_verified": False, "runtime_transfer_profiled": False, "runtime_provenance_checked": result.runtime_provenance_checked},
-        "numerical": {"reference": "tensorflow-eager", "atol": 1e-5, "rtol": 1e-5, "max_scaled_error": result.max_scaled_error},
+        "numerical": {"reference": "tensorflow-eager", "atol": ATOL, "rtol": RTOL, "max_scaled_error": result.max_scaled_error},
         "output": {"device": "GPU:0", "dtype": "float32", "rank": 1, "shape": [4]},
         "lifetime": {"inputs_unchanged": result.inputs_unchanged, "output_survives_input_gc": result.output_lifetime, "repeated_calls": result.repeated_calls},
         "negative_boundary": {"cpu_input_rejected": result.cpu_input_rejected, "float64_rejected": result.float64_rejected, "wrong_rank_rejected": result.wrong_rank_rejected, "watched_tape_rejected": result.gradient_tape_rejected, "forward_accumulator_rejected": result.forward_accumulator_rejected},
     }
+
+
+def is_gpu0_device(device: str) -> bool:
+    """Recognize TensorFlow's canonical GPU:0 device-name suffix."""
+    return device.endswith("/device:GPU:0")
+
+
+def tolerance_scaled_error(difference: Any, reference: Any) -> Any:
+    """Return the approved absolute-plus-relative tolerance scaled error."""
+    return abs(difference) / (ATOL + RTOL * abs(reference))
 
 
 def _add_sources(*roots: Path) -> None:
@@ -375,18 +387,19 @@ def execute_e3(tf: Any, python_dir: Path) -> ExecutionResult:
         reference = tf.reduce_mean(tf.nn.relu(tf.nn.bias_add(tf.matmul(x, weight), bias)), axis=1)
         snapshots = tuple(tf.identity(value) for value in (x, weight, bias))
         output = inference(x, weight, bias)
-    tf.debugging.assert_near(output, reference, rtol=1e-5, atol=1e-5)
-    denominator = tf.maximum(tf.abs(reference), tf.constant(1e-12, tf.float32))
-    scaled = float(tf.reduce_max(tf.abs(output - reference) / denominator).numpy())
-    if output.device.split(":")[0].endswith("GPU") is False or output.dtype != tf.float32 or output.shape != (4,):
+    tf.debugging.assert_near(output, reference, rtol=RTOL, atol=ATOL)
+    scaled = float(tf.reduce_max(tolerance_scaled_error(output - reference, reference)).numpy())
+    if not is_gpu0_device(output.device) or output.dtype != tf.float32 or output.shape != (4,):
         raise RuntimeError("native output violated exact GPU:0 float32 rank-1 shape [4]")
     for original, snapshot in zip((x, weight, bias), snapshots, strict=True):
         tf.debugging.assert_equal(original, snapshot)
+        if not is_gpu0_device(original.device) or not is_gpu0_device(snapshot.device):
+            raise RuntimeError("native input or snapshot left exact TensorFlow GPU:0")
     del x, weight, bias
     gc.collect()
-    tf.debugging.assert_near(output, reference, rtol=1e-5, atol=1e-5)
+    tf.debugging.assert_near(output, reference, rtol=RTOL, atol=ATOL)
     for _ in range(3):
-        tf.debugging.assert_near(inference(*snapshots), reference, rtol=1e-5, atol=1e-5)
+        tf.debugging.assert_near(inference(*snapshots), reference, rtol=RTOL, atol=ATOL)
     with tf.device("/CPU:0"):
         cpu = tf.constant([[1., 2., 3.]], tf.float32)
     cases = (cpu, tf.cast(snapshots[0], tf.float64), tf.reshape(snapshots[0], (2, 2, 3)))
@@ -417,6 +430,21 @@ def execute_e3(tf: Any, python_dir: Path) -> ExecutionResult:
 
 def _artifact(role: str, label: str, path: Path) -> dict[str, Any]:
     return {"role": role, "label": label, "sha256": _sha256(path), "size_bytes": path.stat().st_size}
+
+
+def build_payload(*, source: dict[str, Any], environment: dict[str, Any], toolchain: dict[str, str], artifacts: list[dict[str, Any]], runtime_images: list[dict[str, Any]], bindings: dict[str, Any], result: ExecutionResult) -> dict[str, Any]:
+    """Build precisely the payload accepted by the offline closed verifier."""
+    return {
+        "contract": {"evidence_schema": "tensorflow-cuda-e3-real-nvidia-v1", "verification_scope": "schema-and-integrity-only", "producer_assertions": "self-attested-by-manual-harness", "support_claim": False, "certification_ready": False, "plugin_api": "1.6"},
+        "package": {"distribution": "rextio-tensorflow", "version": "0.1.2", "plugin_module": "rextio_tensorflow.plugin", "native_module": "_rextio_native"},
+        "source": source,
+        "environment": environment,
+        "toolchain": toolchain,
+        "artifacts": artifacts,
+        "runtime_images": runtime_images,
+        "orchestration": {"provider_id": PROVIDER_ID, "capability_id": CAPABILITY_ID, "device": "cuda:0", "input_residency": "device", "dtype": "float32", "ranks": [1, 2], "operations": ["tf.matmul", "tf.nn.bias_add", "tf.nn.relu", "tf.reduce_mean-axis1"], "artifact_profile_sha256": bindings["artifact_profile_sha256"], "authorization_sha256": bindings["authorization_sha256"], "provider_lock_sha256": bindings["lock_sha256"], "probe_sha256": bindings["probe_sha256"], "observations_sha256": bindings["observations_sha256"]},
+        "invariants": execution_invariants(result),
+    }
 
 
 def main() -> int:
@@ -461,17 +489,15 @@ def main() -> int:
             _artifact("generated_cargo_lock", "generated/Cargo.lock", rust_dir / "Cargo.lock"),
             _artifact("native_extension", "python/_rextio_native" + sysconfig.get_config_var("EXT_SUFFIX"), extension),
         ]
-        payload = {
-            "contract": {"evidence_schema": "tensorflow-cuda-e3-real-nvidia-v1", "verification_scope": "schema-and-integrity-only", "producer_assertions": "self-attested-by-manual-harness", "support_claim": False, "certification_ready": False, "plugin_api": "1.6"},
-            "package": {"distribution": "rextio-tensorflow", "version": "0.1.2", "plugin_module": "rextio_tensorflow.plugin", "native_module": "_rextio_native"},
-            "source": {"core_commit": core.head, "core_clean": core.clean, "provider_commit": provider.head, "provider_clean": provider.clean, "plugin_commit": plugin.head, "plugin_clean": plugin.clean, "base_candidate_commit": BASE_CANDIDATE_COMMIT, "plugin_ancestry_checked": True},
-            "environment": {"os": "Linux", "arch": "x86_64", "libc": "GNU", "python_implementation": "CPython", "python_version": "3.11", "tensorflow_version": tf.__version__, "cuda_driver_version": bindings["driver_version"], "gpu": {"ordinal": 0, "sm": args.sm}},
-            "toolchain": toolchain,
-            "artifacts": artifacts,
-            "runtime_images": runtime_images,
-            "orchestration": {"provider_id": PROVIDER_ID, "capability_id": CAPABILITY_ID, "device": "cuda:0", "input_residency": "device", "dtype": "float32", "ranks": [1, 2], "operations": ["tf.matmul", "tf.nn.bias_add", "tf.nn.relu", "tf.reduce_mean-axis1"], "artifact_profile_sha256": bindings["artifact_profile_sha256"], "authorization_sha256": bindings["authorization_sha256"], "provider_lock_sha256": bindings["lock_sha256"], "probe_sha256": bindings["probe_sha256"], "observations_sha256": bindings["observations_sha256"]},
-            "invariants": execution_invariants(result),
-        }
+        payload = build_payload(
+            source={"core_commit": core.head, "core_clean": core.clean, "provider_commit": provider.head, "provider_clean": provider.clean, "plugin_commit": plugin.head, "plugin_clean": plugin.clean, "base_candidate_commit": BASE_CANDIDATE_COMMIT, "plugin_ancestry_checked": True},
+            environment={"os": "Linux", "arch": "x86_64", "libc": "GNU", "python_implementation": "CPython", "python_version": "3.11", "tensorflow_version": tf.__version__, "cuda_driver_version": bindings["driver_version"], "gpu": {"ordinal": 0, "sm": args.sm}},
+            toolchain=toolchain,
+            artifacts=artifacts,
+            runtime_images=runtime_images,
+            bindings=bindings,
+            result=result,
+        )
         envelope = verifier.make_envelope(payload)
         verifier.validate_envelope(envelope)
         atomic_create(args.output, verifier.canonical_bytes(envelope))

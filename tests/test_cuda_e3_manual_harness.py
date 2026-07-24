@@ -245,6 +245,77 @@ def test_execution_payload_records_only_observed_boundaries_and_no_profiler_clai
     assert "no_host_fallback_observed" not in encoded
 
 
+def test_producer_payload_is_accepted_by_the_offline_verifier_without_tensorflow() -> None:
+    module = _module()
+    from scripts import verify_cuda_e3_evidence as verifier
+
+    digest = "a" * 64
+    result = module.ExecutionResult(
+        native_extension_executed=True,
+        numerical_parity=True,
+        max_scaled_error=0.25,
+        inputs_unchanged=True,
+        output_lifetime=True,
+        repeated_calls=True,
+        cpu_input_rejected=True,
+        float64_rejected=True,
+        wrong_rank_rejected=True,
+        gradient_tape_rejected=True,
+        forward_accumulator_rejected=True,
+        inputs_on_gpu=True,
+        output_on_gpu=True,
+        runtime_provenance_checked=True,
+    )
+    payload = module.build_payload(
+        source={
+            "core_commit": verifier.CORE_COMMIT,
+            "core_clean": True,
+            "provider_commit": verifier.PROVIDER_COMMIT,
+            "provider_clean": True,
+            "plugin_commit": "b" * 40,
+            "plugin_clean": True,
+            "base_candidate_commit": verifier.BASE_CANDIDATE_COMMIT,
+            "plugin_ancestry_checked": True,
+        },
+        environment={
+            "os": "Linux",
+            "arch": "x86_64",
+            "libc": "GNU",
+            "python_implementation": "CPython",
+            "python_version": "3.11",
+            "tensorflow_version": "2.21.0",
+            "cuda_driver_version": 12080,
+            "gpu": {"ordinal": 0, "sm": "sm_80"},
+        },
+        toolchain={"rustc_version": "1.93.1", "cargo_version": "1.93.1", "target": module.TARGET},
+        artifacts=[
+            {"role": role, "label": f"evidence/{role}", "sha256": digest, "size_bytes": 1}
+            for role in sorted(verifier.ARTIFACT_ROLES)
+        ],
+        runtime_images=[
+            {"role": role, "wheel_path": path, "sha256": digest, "size_bytes": 1, "build_id": None, "mapped": True}
+            for role, path in verifier.RUNTIME_IMAGES.items()
+        ],
+        bindings={
+            "artifact_profile_sha256": digest,
+            "authorization_sha256": digest,
+            "lock_sha256": digest,
+            "probe_sha256": digest,
+            "observations_sha256": digest,
+        },
+        result=result,
+    )
+    assert payload["package"]["native_module"] == "_rextio_native"
+    assert verifier.validate_envelope(verifier.make_envelope(payload)) == payload
+
+
+def test_gpu_device_and_tolerance_helpers_are_exact_and_gpu_free() -> None:
+    module = _module()
+    assert module.is_gpu0_device("/job:localhost/replica:0/task:0/device:GPU:0")
+    assert not module.is_gpu0_device("/job:localhost/replica:0/task:0/device:GPU:1")
+    assert module.tolerance_scaled_error(2e-5, 1.0) == pytest.approx(1.0)
+
+
 def test_source_contains_explicit_tensorflow_before_extension_and_provenance_guards() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert source.index("import tensorflow as tf") < source.index("import_generated_inference(")
