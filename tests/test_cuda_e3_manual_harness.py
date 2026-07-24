@@ -81,6 +81,18 @@ def test_cli_requires_exclusive_work_and_output_paths(tmp_path: Path) -> None:
         module.validate_requested_paths_and_values(args, {"sm_80"})
 
 
+def test_destinations_must_be_outside_every_cleanliness_attested_checkout(tmp_path: Path) -> None:
+    module = _module()
+    roots = tuple(tmp_path / name for name in ("tensorflow", "core", "provider"))
+    for root in roots:
+        root.mkdir()
+    args = argparse.Namespace(work_dir=tmp_path / "work", output=tmp_path / "evidence.json")
+    module.validate_destinations_are_outside_checkouts(args, roots)
+    args.output = roots[0] / "evidence.json"
+    with pytest.raises(RuntimeError, match="outside"):
+        module.validate_destinations_are_outside_checkouts(args, roots)
+
+
 def test_canonical_atomic_create_is_exclusive_and_cleans_temporary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -136,12 +148,27 @@ def test_cargo_build_is_locked_pinned_and_installs_exact_extension(
 
 def test_provider_observations_are_validated_and_bound_to_hashes() -> None:
     module = _module()
-    profile_hash = "1" * 64
+    profile = {"target_triple": module.TARGET}
+    preflight = {
+        "provider_id": module.PROVIDER_ID,
+        "status": "ready",
+        "reason_codes": [],
+        "observations": [
+            {"key": "driver.version", "value": "12080"},
+            {"key": "selected.device", "value": "0"},
+            {"key": "selected.sm", "value": "sm_80"},
+            {"key": "probe.schema", "value": "1"},
+            {"key": "framework.runtime", "value": "tensorflow-tfe"},
+        ],
+        "support_claim": False,
+    }
+    profile_hash = module._canonical_hash(profile)
     plan = {
-        "artifact_profile": {"target_triple": module.TARGET},
+        "artifact_profile": profile,
+        "preflight": preflight,
         "lock": {
             "artifact_profile_sha256": profile_hash,
-            "preflight_sha256": "2" * 64,
+            "preflight_sha256": module._canonical_hash(preflight),
         },
         "lowering_authorization": {
             "provider_id": module.PROVIDER_ID,
@@ -155,13 +182,7 @@ def test_provider_observations_are_validated_and_bound_to_hashes() -> None:
             "support_claim": False,
             "certification_tier": "build-only",
             "reason_codes": [],
-            "observations": [
-                {"key": "driver.version", "value": "12080"},
-                {"key": "selected.device", "value": "0"},
-                {"key": "selected.sm", "value": "sm_80"},
-                {"key": "probe.schema", "value": "1"},
-                {"key": "framework.runtime", "value": "tensorflow-tfe"},
-            ],
+            "observations": preflight["observations"],
         },
     }
     result = module.validate_and_bind_provider_plan(plan, "sm_80", "3" * 64)
@@ -178,14 +199,18 @@ def test_provider_observations_are_validated_and_bound_to_hashes() -> None:
     plan["report"]["support_claim"] = True
     with pytest.raises(RuntimeError, match="support"):
         module.validate_and_bind_provider_plan(plan, "sm_80", "3" * 64)
+    plan["report"]["support_claim"] = False
+    plan["artifact_profile"]["target_triple"] = "forged-target"
+    with pytest.raises(RuntimeError, match="profile"):
+        module.validate_and_bind_provider_plan(plan, "sm_80", "3" * 64)
 
 
 def test_runtime_dso_capture_requires_expected_mapped_wheel_images(tmp_path: Path) -> None:
     module = _module()
-    wheel = tmp_path / "tensorflow"
-    pywrap = wheel / "python" / "_pywrap_tensorflow_internal.so"
-    cc = wheel / "libtensorflow_cc.so.2"
-    framework = wheel / "libtensorflow_framework.so.2"
+    wheel = tmp_path
+    pywrap = wheel / "tensorflow" / "python" / "lib_pywrap_tensorflow_common.so"
+    cc = wheel / "tensorflow" / "libtensorflow_cc.so.2"
+    framework = wheel / "tensorflow" / "libtensorflow_framework.so.2"
     for path in (pywrap, cc, framework):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(path.name.encode())
@@ -196,7 +221,7 @@ def test_runtime_dso_capture_requires_expected_mapped_wheel_images(tmp_path: Pat
         read_build_id=lambda path: f"build-{path.name}",
     )
     assert {row["role"] for row in identities} == {
-        "tensorflow_pywrap",
+        "pywrap_tensorflow_common",
         "tensorflow_cc",
         "tensorflow_framework",
     }
@@ -204,6 +229,8 @@ def test_runtime_dso_capture_requires_expected_mapped_wheel_images(tmp_path: Pat
     assert all(not row["wheel_path"].startswith("/") for row in identities)
     with pytest.raises(RuntimeError, match="mapped"):
         module.capture_runtime_images(wheel, maps.replace(str(cc), ""), read_build_id=lambda _: "x")
+    with pytest.raises(RuntimeError, match="build ID"):
+        module.capture_runtime_images(wheel, maps, read_build_id=lambda _: None)
 
 
 def test_execution_payload_records_only_observed_boundaries_and_no_profiler_claims() -> None:
@@ -293,7 +320,7 @@ def test_producer_payload_is_accepted_by_the_offline_verifier_without_tensorflow
             for role in sorted(verifier.ARTIFACT_ROLES)
         ],
         runtime_images=[
-            {"role": role, "wheel_path": path, "sha256": digest, "size_bytes": 1, "build_id": None, "mapped": True}
+            {"role": role, "wheel_path": path, "sha256": digest, "size_bytes": 1, "build_id": "b" * 8, "mapped": True}
             for role, path in verifier.RUNTIME_IMAGES.items()
         ],
         bindings={

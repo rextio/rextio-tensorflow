@@ -127,6 +127,14 @@ def validate_requested_paths_and_values(args: argparse.Namespace, allowed_sms: s
         raise RuntimeError("--sm must be one of the verifier allowed architectures")
 
 
+def validate_destinations_are_outside_checkouts(args: argparse.Namespace, roots: tuple[Path, Path, Path]) -> None:
+    """Keep generated state outside every checkout whose cleanliness is attested."""
+    destinations = (args.work_dir.resolve(), args.output.resolve())
+    for destination in destinations:
+        if any(destination.is_relative_to(root) for root in roots):
+            raise RuntimeError("work-dir and output must be outside all source checkouts")
+
+
 def atomic_create(output: Path, data: bytes) -> None:
     """Create, never replace, canonical evidence; clean a failed temporary."""
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
@@ -199,11 +207,14 @@ def validate_and_bind_provider_plan(plan: dict[str, Any], sm: str, probe_sha256:
     authorization = plan["lowering_authorization"]
     lock = plan["lock"]
     profile = plan.get("artifact_profile", {})
+    preflight = plan["preflight"]
     report = plan["report"]
     if profile.get("target_triple") != TARGET:
         raise RuntimeError("provider artifact profile target changed")
     if report.get("support_claim") is not False or report.get("certification_tier") != "build-only":
         raise RuntimeError("provider support/certification claim is not build-only")
+    if report.get("status") != "ready" or report.get("reason_codes") != []:
+        raise RuntimeError("provider preflight is not unqualified ready")
     expected = {
         "provider_id": PROVIDER_ID,
         "capability_id": CAPABILITY_ID,
@@ -213,10 +224,12 @@ def validate_and_bind_provider_plan(plan: dict[str, Any], sm: str, probe_sha256:
     if any(authorization.get(key) != value for key, value in expected.items()):
         raise RuntimeError("provider authorization changed")
     profile_hash = authorization.get("artifact_profile_sha256")
-    if not isinstance(profile_hash, str) or not HEX64.fullmatch(profile_hash) or lock.get("artifact_profile_sha256") != profile_hash:
+    if not isinstance(profile_hash, str) or not HEX64.fullmatch(profile_hash) or lock.get("artifact_profile_sha256") != profile_hash or _canonical_hash(profile) != profile_hash:
         raise RuntimeError("provider profile authorization is unbound")
-    if not isinstance(lock.get("preflight_sha256"), str) or not HEX64.fullmatch(lock["preflight_sha256"]):
+    if not isinstance(lock.get("preflight_sha256"), str) or not HEX64.fullmatch(lock["preflight_sha256"]) or _canonical_hash(preflight) != lock["preflight_sha256"]:
         raise RuntimeError("provider lock is invalid")
+    if not isinstance(probe_sha256, str) or not HEX64.fullmatch(probe_sha256):
+        raise RuntimeError("provider probe hash is invalid")
     observations = report.get("observations")
     if not isinstance(observations, list):
         raise RuntimeError("provider observations are absent")
@@ -254,22 +267,16 @@ def capture_runtime_images(wheel_root: Path, maps: str, read_build_id: Callable[
         "tensorflow_framework": wheel_root / "tensorflow" / "libtensorflow_framework.so.2",
         "pywrap_tensorflow_common": wheel_root / "tensorflow" / "python" / "lib_pywrap_tensorflow_common.so",
     }
-    # The legacy spelling is accepted only to keep the GPU-free unit contract
-    # focused on map parsing; a real production payload always uses canonical.
-    legacy = wheel_root / "python" / "_pywrap_tensorflow_internal.so"
-    if not canonical["pywrap_tensorflow_common"].is_file() and legacy.is_file():
-        canonical = {
-            "tensorflow_cc": wheel_root / "libtensorflow_cc.so.2",
-            "tensorflow_framework": wheel_root / "libtensorflow_framework.so.2",
-            "tensorflow_pywrap": legacy,
-        }
     rows: list[dict[str, Any]] = []
     for role, path in canonical.items():
         resolved = path.resolve()
         if not path.is_file() or str(resolved) not in maps:
             raise RuntimeError(f"expected TensorFlow runtime image is not mapped: {role}")
         relative = path.relative_to(wheel_root).as_posix()
-        rows.append({"role": role, "wheel_path": relative, "sha256": _sha256(path), "size_bytes": path.stat().st_size, "build_id": read_build_id(path), "mapped": True})
+        build_id = read_build_id(path)
+        if not build_id:
+            raise RuntimeError(f"expected TensorFlow runtime image has no build ID: {role}")
+        rows.append({"role": role, "wheel_path": relative, "sha256": _sha256(path), "size_bytes": path.stat().st_size, "build_id": build_id, "mapped": True})
     return rows
 
 
@@ -458,6 +465,7 @@ def main() -> int:
     toolchain = validate_host()
     roots = tuple(path.resolve() for path in (args.tensorflow_root, args.core_root, args.provider_root))
     tensorflow_root, core_root, provider_root = roots
+    validate_destinations_are_outside_checkouts(args, roots)
     core = checkout_identity(core_root)
     provider = checkout_identity(provider_root)
     plugin = checkout_identity(tensorflow_root)
@@ -489,6 +497,12 @@ def main() -> int:
             _artifact("generated_cargo_lock", "generated/Cargo.lock", rust_dir / "Cargo.lock"),
             _artifact("native_extension", "python/_rextio_native" + sysconfig.get_config_var("EXT_SUFFIX"), extension),
         ]
+        core = checkout_identity(core_root)
+        provider = checkout_identity(provider_root)
+        plugin = checkout_identity(tensorflow_root)
+        validate_checkout(core, CORE_COMMIT, CORE_COMMIT)
+        validate_checkout(provider, PROVIDER_COMMIT, PROVIDER_COMMIT)
+        validate_checkout(plugin, args.expected_tensorflow_commit, BASE_CANDIDATE_COMMIT)
         payload = build_payload(
             source={"core_commit": core.head, "core_clean": core.clean, "provider_commit": provider.head, "provider_clean": provider.clean, "plugin_commit": plugin.head, "plugin_clean": plugin.clean, "base_candidate_commit": BASE_CANDIDATE_COMMIT, "plugin_ancestry_checked": True},
             environment={"os": "Linux", "arch": "x86_64", "libc": "GNU", "python_implementation": "CPython", "python_version": "3.11", "tensorflow_version": tf.__version__, "cuda_driver_version": bindings["driver_version"], "gpu": {"ordinal": 0, "sm": args.sm}},
