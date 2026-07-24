@@ -20,6 +20,16 @@ def _replace_once(source: str, old: str, new: str, label: str) -> str:
     return source.replace(old, new, 1)
 
 
+def _remove_between(source: str, start: str, end: str, label: str) -> str:
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise RuntimeError(f"rextio-tensorflow CUDA helper source drift at {label}")
+    start_index = source.index(start)
+    end_index = source.index(end)
+    if end_index <= start_index:
+        raise RuntimeError(f"rextio-tensorflow CUDA helper anchor order changed at {label}")
+    return source[:start_index] + source[end_index:]
+
+
 def _build_cuda_runtime() -> str:
     source = runtime_module_helpers()
     source = source.replace("rextio_tensorflow_runtime", "rextio_tensorflow_cuda_runtime")
@@ -43,6 +53,11 @@ def _build_cuda_runtime() -> str:
         source,
         '    const EXPECTED_TF_VERSION: &str = "2.21.0";\n',
         """    const EXPECTED_TF_VERSION: &str = "2.21.0";
+    // Artifact audit: the official CPython 3.11 manylinux_2_27_x86_64 wheel
+    // sha256 9056fbc9ba04235810b71ae6cbd958a196e8804fb53bbcffbf3e23b56155f124
+    // exports this exact symbol from python/lib_pywrap_tensorflow_common.so.
+    // python/_pywrap_tfe.so references it as undefined, so the RTLD_NOLOAD
+    // common-image handle below is the exact pinned owner.
     const SYM_TAPE_POSSIBLE_GRADIENT_TYPES: &str =
         "_Z35TFE_Py_TapeSetPossibleGradientTypesP7_object";
 
@@ -63,7 +78,7 @@ def _build_cuda_runtime() -> str:
         """        tf_tensor_byte_size: unsafe extern "C" fn(*const TfTensor) -> usize,
 
         tfe_new_tensor_handle:""",
-        """        tf_tensor_byte_size: unsafe extern "C" fn(*const TfTensor) -> usize;
+        """        tf_tensor_byte_size: unsafe extern "C" fn(*const TfTensor) -> usize,
         tf_delete_device_list: unsafe extern "C" fn(*mut TfDeviceList),
         tf_device_list_count: unsafe extern "C" fn(*const TfDeviceList) -> c_int,
         tf_device_list_name: unsafe extern "C" fn(
@@ -308,16 +323,22 @@ def _build_cuda_runtime() -> str:
     )
     source = _replace_once(
         source,
-        """        let api = load_api(py)?;
-        let context = BorrowedContext::from_python(py, api)?;
-        let object = value.as_ptr().cast_const();
+        """        if unsafe { !(api.eager_tensor_check_exact)(object) } {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "rextio-tensorflow: expected a TensorFlow EagerTensor",
+            ));
+        }
+        let borrowed = unsafe { (api.eager_tensor_handle)(object) };
 """,
-        """        let api = load_api(py)?;
-        let context = BorrowedContext::from_python(py, api)?;
+        """        if unsafe { !(api.eager_tensor_check_exact)(object) } {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "rextio-tensorflow: expected a TensorFlow EagerTensor",
+            ));
+        }
         reject_gradient_recording(py, value, api)?;
-        let object = value.as_ptr().cast_const();
+        let borrowed = unsafe { (api.eager_tensor_handle)(object) };
 """,
-        "gradient guard call",
+        "gradient guard call after exact type check",
     )
     materializers = r"""
     pub fn materialize_f32_cuda0_2d(
@@ -344,6 +365,53 @@ def _build_cuda_runtime() -> str:
         + "    fn unary(input: &RxtTfCudaTensor, op_name: &str) -> PyResult<RxtTfCudaTensor> {\n",
         "rank-specific materializers",
     )
+    source = _replace_once(
+        source,
+        "    pub fn materialize_tensor(\n",
+        "    fn materialize_tensor(\n",
+        "private generic materializer",
+    )
+
+    # Keep the generated CUDA module's callable surface equal to the frozen E3
+    # slice even though its audited loader/RAII foundation is derived from the
+    # broader CPU helper.
+    source = _remove_between(
+        source,
+        "    pub fn extract_i64_cpu_1d(\n",
+        "    fn materialize_tensor(\n",
+        "remove int64 boundary",
+    )
+    source = _remove_between(
+        source,
+        "    pub fn add(",
+        "    pub fn bias_add(",
+        "remove non-E3 binary operations before BiasAdd",
+    )
+    source = _remove_between(
+        source,
+        "    pub fn mul(",
+        "    pub fn relu(",
+        "remove non-E3 binary operations after BiasAdd",
+    )
+    source = _remove_between(
+        source,
+        "    pub fn sigmoid(",
+        "    fn reduction_axis_handle(",
+        "remove non-E3 unary operations",
+    )
+    source = _remove_between(
+        source,
+        "    pub fn reduce_mean_axis0(",
+        "    pub fn reduce_mean_axis1(",
+        "remove non-E3 reductions before mean axis1",
+    )
+    tail_start = "    pub fn reduce_mean_axis1_keepdims("
+    if source.count(tail_start) != 1:
+        raise RuntimeError("rextio-tensorflow CUDA helper source drift at reduction tail")
+    final_module_close = source.rfind("\n}")
+    if final_module_close <= source.index(tail_start):
+        raise RuntimeError("rextio-tensorflow CUDA helper final module close changed")
+    source = source[: source.index(tail_start)] + source[final_module_close:]
     return source
 
 

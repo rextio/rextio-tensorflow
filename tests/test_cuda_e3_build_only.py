@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
+from pathlib import Path
 
 import pytest
 from rextio.config.schema import RextioConfig
@@ -123,8 +125,14 @@ def test_cuda_types_have_exact_api_16_metadata_and_distinct_boundary_type() -> N
         assert set(metadata.runtime_requirements) == set(CUDA_RUNTIME_REQUIREMENTS)
         assert item.rust_type == "rextio_tensorflow_cuda_runtime::RxtTfCudaTensor"
         assert item.conversion is not None
-        assert f"extract_f32_cuda0_{rank}d" in item.conversion.param_expr
-        assert f"materialize_f32_cuda0_{rank}d" in item.conversion.return_expr
+        assert item.conversion.param_expr == (
+            "rextio_tensorflow_cuda_runtime::"
+            f"extract_f32_cuda0_{rank}d(py, &{{param}})?"
+        )
+        assert item.conversion.return_expr == (
+            "rextio_tensorflow_cuda_runtime::"
+            f"materialize_f32_cuda0_{rank}d(py, {{value}})?"
+        )
     requirements = derive_device_requirements(tuple(values))
     assert len(requirements) == 1
     assert requirements[0].logical_device == "gpu:0"
@@ -197,6 +205,16 @@ def test_claims_exact_cuda_vertical_slice() -> None:
                 _keyword("keepdims", "bool", True),
             ),
         ),
+        _site(
+            "tf.reduce_mean",
+            (TENSOR_F32_CUDA0_2D,),
+            keywords=(_keyword("axis", "bool", True),),
+        ),
+        _site(
+            "tf.nn.bias_add",
+            (TENSOR_F32_CUDA0_2D, TENSOR_F32_CUDA0_1D),
+            keywords=(_keyword("data_format", "int", "NHWC"),),
+        ),
     ),
 )
 def test_cuda_sites_outside_slice_fail_closed_before_cpu_lanes(site: ClaimSite) -> None:
@@ -238,6 +256,48 @@ def test_cuda_lower_requires_exact_authorization_and_revalidates_claim() -> None
         )
 
 
+def test_cuda_lower_rejects_forged_keyword_type_metadata() -> None:
+    site = _site(
+        "tf.reduce_mean",
+        (TENSOR_F32_CUDA0_2D,),
+        keywords=(_keyword("axis", "int", 1),),
+    )
+    claimed = PLUGIN.claim(site, CONFIG)
+    assert isinstance(claimed, Claimed)
+    forged = replace(
+        site,
+        rule_id=claimed.rule_id,
+        result_type=claimed.result_type,
+        keywords=(_keyword("axis", "bool", 1),),
+    )
+    with pytest.raises(ValueError, match="unique literal keywords"):
+        PLUGIN.lower(forged, _ctx(("x",), _authorization()))
+
+
+def test_machine_readable_contract_is_explicitly_non_certifying() -> None:
+    root = Path(__file__).resolve().parents[1]
+    contract = json.loads(
+        (root / "ci/cuda-e3-build-only.json").read_text(encoding="utf-8")
+    )
+    assert contract["support_claim"] is False
+    assert contract["certification_ready"] is False
+    assert contract["real_gpu_evidence"] is False
+    assert contract["provider_commit"] == "cf65733f06b91a801f9806367f09948ee7162540"
+    assert contract["hosted_ci"] == {
+        "synthetic_probe": True,
+        "generate": True,
+        "compile_link_cdylib": True,
+        "import_tensorflow": False,
+        "load_extension": False,
+        "execute_extension": False,
+        "execute_cuda": False,
+    }
+    assert contract["resource_contracts"] == [
+        "framework.tensor:framework:borrow-validate",
+        "framework.eager-context:framework:borrow-validate",
+    ]
+
+
 def test_cuda_runtime_is_separate_and_contains_exact_safety_anchors() -> None:
     cpu = runtime_module_helpers()
     helper = cuda_runtime_module_helpers()
@@ -262,6 +322,32 @@ def test_cuda_runtime_is_separate_and_contains_exact_safety_anchors() -> None:
     assert 'name.ends_with("/device:GPU:0")' in helper
     assert "if actual != expected" in helper
     assert "possible != 0" in helper
+    assert (
+        "9056fbc9ba04235810b71ae6cbd958a196e8804fb53bbcffbf3e23b56155f124"
+        in helper
+    )
+    extract = helper[helper.index("fn extract_common(") : helper.index(
+        "pub fn extract_f32_cuda0_2d("
+    )]
+    assert extract.index("eager_tensor_check_exact") < extract.index(
+        "reject_gradient_recording(py, value, api)?"
+    )
+    assert (
+        'tf_tensor_byte_size: unsafe extern "C" fn(*const TfTensor) -> usize,'
+        in helper
+    )
     assert "TFE_TensorHandleResolve" not in helper
     assert "TFE_TensorHandleCopyToDevice" not in helper
     assert ".numpy()" not in helper
+    for excluded_public_helper in (
+        "pub fn add(",
+        "pub fn mul(",
+        "pub fn sigmoid(",
+        "pub fn tanh(",
+        "pub fn reduce_sum",
+        "pub fn argmax",
+        "pub fn reduce_mean_axis0",
+        "pub fn reduce_mean_axis1_keepdims",
+        "pub fn extract_i64",
+    ):
+        assert excluded_public_helper not in helper

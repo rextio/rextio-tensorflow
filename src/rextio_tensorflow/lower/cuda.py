@@ -52,8 +52,14 @@ def _nonliteral_operands(claimed: ClaimSite, count: int) -> bool:
 
 def _keywords(claimed: ClaimSite) -> dict[str, object]:
     values: dict[str, object] = {}
+    expected_types = {"data_format": "str", "axis": "int", "keepdims": "bool"}
     for keyword in claimed.keywords:
-        if keyword.name in values or not keyword.literal.is_literal:
+        if (
+            keyword.name in values
+            or keyword.name not in expected_types
+            or keyword.arg_type != expected_types[keyword.name]
+            or not keyword.literal.is_literal
+        ):
             raise ValueError("CUDA lowering requires unique literal keywords")
         values[keyword.name] = keyword.literal.value
     return values

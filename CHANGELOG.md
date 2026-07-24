@@ -7,6 +7,21 @@ Changelog and Semantic Versioning conventions.
 
 ### Added
 
+- Add a Linux x86_64 GNU TensorFlow CUDA E3 **build-only** candidate for the
+  exact `tf.matmul → tf.nn.bias_add → tf.nn.relu →
+  tf.reduce_mean(axis=1)` float32 rank-1/rank-2 inference slice. CUDA values
+  must already reside on `cuda:0`; support, certification, release,
+  performance, training, transfers, and real-GPU claims remain false.
+- Add separate generated `rextio_tensorflow_cuda_runtime` /
+  `RxtTfCudaTensor` boundaries with exact TensorFlow 2.21 wheel reuse,
+  per-symbol provenance, full `TFE_ContextListDevices` GPU:0 enumeration,
+  exact backing-device equality, RAII ownership, and active backward-tape /
+  forward-accumulator rejection.
+- Add API 1.6 `DeviceValueMetadata`, exact
+  `rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64` authorization,
+  CUDA-first fail-closed claim/lower routing, a machine-readable non-certifying
+  contract, and a synthetic-provider Linux compile/link-only CI gate that
+  never imports TensorFlow or loads/executes the candidate.
 - Add rank-1 float32 CPU `tf.nn.softmax` with the final axis omitted or
   supplied as literal positional/keyword `axis=0`. The lowering reuses the
   owned same-wheel TFE `Softmax` unary path, preserves the existing explicit
@@ -70,6 +85,8 @@ Changelog and Semantic Versioning conventions.
 
 ### Changed
 
+- Require `rextio>=0.1.6,<0.2` and plugin API 1.6 for the unreleased 0.1.2
+  branch while preserving the existing CPU runtime behavior and helper text.
 - Prepared 0.1.1 compatibility with `rextio` 0.1.5 / plugin API 1.4 while
   retaining this provider's declared API **1.3** and its existing package,
   CPython, TensorFlow, and private-ABI pins.

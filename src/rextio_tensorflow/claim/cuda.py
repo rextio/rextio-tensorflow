@@ -46,10 +46,12 @@ def _tensor_operands_are_nonliteral(site: ClaimSite, count: int) -> bool:
 
 def _literal_keywords(site: ClaimSite) -> dict[str, object] | None:
     values: dict[str, object] = {}
+    expected_types = {"data_format": "str", "axis": "int", "keepdims": "bool"}
     for keyword in site.keywords:
         if (
             keyword.name in values
-            or keyword.name not in {"data_format", "axis", "keepdims"}
+            or keyword.name not in expected_types
+            or keyword.arg_type != expected_types[keyword.name]
             or not keyword.literal.is_literal
         ):
             return None

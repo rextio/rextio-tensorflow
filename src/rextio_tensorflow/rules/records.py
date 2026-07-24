@@ -688,6 +688,96 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/cuda0-matmul-f32-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.matmul on two TensorF32Cuda0_2D values",
+        ),
+        constraint=(
+            "Build-only Linux x86_64 GNU candidate. Both exact EagerTensor "
+            "inputs are already resident on the one enumerated TensorFlow GPU:0, "
+            "float32 rank-2, and no backward tape or forward accumulator may record."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-035",
+        guidance="Use tf.matmul(x, w) with two TensorF32Cuda0_2D operands.",
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda0-bias-add-nhwc-f32-2d-1d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.bias_add on CUDA rank-2 value and rank-1 bias",
+        ),
+        constraint=(
+            "Build-only candidate with value then bias, both already on exact "
+            "TensorFlow GPU:0, and omitted or literal NHWC data_format."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-036",
+        guidance="Use tf.nn.bias_add(value, bias) with default or literal NHWC.",
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda0-relu-f32-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.relu on TensorF32Cuda0_2D",
+        ),
+        constraint=(
+            "One positional float32 rank-2 exact EagerTensor already resident "
+            "on the enumerated TensorFlow GPU:0; no keywords."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-037",
+        guidance="Use tf.nn.relu(x) with TensorF32Cuda0_2D.",
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda0-reduce-mean-axis1-f32-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.reduce_mean on TensorF32Cuda0_2D with axis=1",
+        ),
+        constraint=(
+            "Literal named axis=1 and omitted or False keepdims. The user tensor "
+            "stays on exact GPU:0; one int32 CPU reduction-axis handle is the "
+            "only bounded host control input."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-038",
+        guidance="Use tf.reduce_mean(x, axis=1) and omit keepdims or pass False.",
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda-e3-outside-bounded-slice",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="type",
+            pattern="CUDA TensorFlow operation outside the four-rule E3 slice",
+        ),
+        constraint=(
+            "Any covered call or binary operation carrying a CUDA marker is "
+            "routed through the CUDA lane before CPU rules and fails closed."
+        ),
+        outcome="fallback",
+        diagnostic_code="RXTP-TENSORFLOW-034",
+        guidance=(
+            "Keep CUDA code to matmul, NHWC bias_add, rank-2 relu, and "
+            "reduce_mean(axis=1), or retain Python fallback."
+        ),
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/unsupported-tensor-surface",
         provider="rextio-tensorflow",
         scope=RuleScope(
