@@ -7,8 +7,11 @@ import json
 from pathlib import Path
 
 import pytest
+from rextio.analyzer.project_scanner import analyze_project
 from rextio.config.schema import RextioConfig
+from rextio.config.schema import PluginConfig
 from rextio.devices import DeviceLoweringAuthorization, derive_device_requirements
+from rextio.plugins.loader import load_plugin_registry
 from rextio.plugins.api import (
     ClaimLiteral,
     Claimed,
@@ -34,9 +37,17 @@ from rextio_tensorflow.plugin import plugin
 from rextio_tensorflow.plugin_types import CUDA_RUNTIME_REQUIREMENTS, plugin_type
 from rextio_tensorflow.rust_snippets.cuda_runtime import cuda_runtime_module_helpers
 from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
+from rextio.targets.models import TargetSpec
 
 PLUGIN = plugin()
 CONFIG = RextioConfig()
+
+
+class _EntryPoint:
+    name = "rextio-tensorflow"
+
+    def load(self):
+        return plugin
 
 
 def _site(
@@ -295,6 +306,53 @@ def test_machine_readable_contract_is_explicitly_non_certifying() -> None:
     assert contract["resource_contracts"] == [
         "framework.tensor:framework:borrow-validate",
         "framework.eager-context:framework:borrow-validate",
+    ]
+
+
+def test_analyzer_accepts_only_the_exact_cuda_e3_chain(tmp_path: Path) -> None:
+    (tmp_path / "rextio.toml").write_text(
+        '[plugins]\nenabled = ["rextio-tensorflow"]\n',
+        encoding="utf-8",
+    )
+    package = tmp_path / "src" / "cuda_app"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "kernels.py").write_text(
+        """
+import tensorflow as tf
+from rextio_tensorflow.types import TensorF32Cuda0_1D, TensorF32Cuda0_2D
+
+
+def inference(
+    x: TensorF32Cuda0_2D,
+    weight: TensorF32Cuda0_2D,
+    bias: TensorF32Cuda0_1D,
+) -> TensorF32Cuda0_1D:
+    hidden = tf.matmul(x, weight)
+    biased = tf.nn.bias_add(hidden, bias)
+    activated = tf.nn.relu(biased)
+    return tf.reduce_mean(activated, axis=1)
+""",
+        encoding="utf-8",
+    )
+    registry = load_plugin_registry(
+        PluginConfig(enabled=("rextio-tensorflow",)),
+        TargetSpec(),
+        entry_points=(_EntryPoint(),),
+        full_config=CONFIG,
+    )
+    analysis = analyze_project(
+        tmp_path,
+        active_plugins=registry.active,
+        plugin_registry=registry,
+        plugin_config=CONFIG,
+    )
+    [function] = analysis.accepted_native_functions
+    assert [claim.rule_id for claim in function.plugin_claims] == [
+        CUDA_MATMUL_RULE,
+        CUDA_BIAS_ADD_RULE,
+        CUDA_RELU_RULE,
+        CUDA_MEAN_AXIS1_RULE,
     ]
 
 

@@ -137,7 +137,7 @@ Windows support is **explicitly deferred**. Unsupported compile targets
 (Windows, musl, other) fail closed at **native build** via `compile_error!`
 because the POSIX `dlfcn` externs are not a truthful runtime contract there.
 Runtime availability failures on supported profiles still never silently retry
-the Python body under plugin API 1.3 (no runtime-availability hook).
+the Python body under plugin API 1.6 (no runtime-availability hook).
 
 ### Why a private ABI exists
 
@@ -168,7 +168,7 @@ not C++ symbols.
 
 ## Supported TensorFlow forms and result ranks
 
-Claim decisions are pure functions of Rextio API 1.3 site metadata (kind,
+Claim decisions are pure functions of Rextio API 1.6 site metadata (kind,
 target, operand types, keyword **literals**). Lowering **revalidates** the
 same constraints and fails with `ValueError` (not `assert`).
 
@@ -486,7 +486,7 @@ invoked with annotation-violating values, for example:
 | `tf.Variable(...)` | `expected a TensorFlow EagerTensor` |
 | NumPy array | `expected a TensorFlow EagerTensor` |
 
-These do **not** transparently fall back to the Python body under API 1.3.
+These do **not** transparently fall back to the Python body under API 1.6.
 
 ---
 
@@ -563,7 +563,7 @@ mypy src
 
 Focused unit tests cover analyzer-resolved import aliases, claim accept/reject,
 positional-literal alignment, lower emission into
-`rextio_tensorflow_runtime`, plugin API 1.3 loader contract, empty crate deps,
+`rextio_tensorflow_runtime`, plugin API 1.6 loader contract, empty crate deps,
 runtime-helper hardening (`RTLD_NOLOAD`, private bridge symbols, no
 `unwrap`/`panic!` in helpers), and **platform ABI profile source contracts**
 (certified macOS arm64, experimental Linux x86_64/aarch64, unsupported/
