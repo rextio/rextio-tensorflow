@@ -44,7 +44,7 @@ def test_entry_point_factory_returns_plugin() -> None:
     obj = plugin()
     assert isinstance(obj, RextioTensorflowPlugin)
     assert obj.plugin_id == PLUGIN_ID
-    assert obj.api_version == REQUIRED_PLUGIN_API == "1.3"
+    assert obj.api_version == REQUIRED_PLUGIN_API == "1.6"
     assert __version__ == "0.1.2"
 
 
@@ -54,7 +54,7 @@ def test_core_loader_accepts_the_plugin() -> None:
     assert active.id == PLUGIN_ID
     assert active.rules_provided is True
     assert active.lowering_provided is True
-    assert active.api_version == "1.3"
+    assert active.api_version == "1.6"
     assert active.packages == ("tensorflow",)
     assert __version__ in active.name
     assert registry.coverages[0].coverage == COVERAGE
@@ -63,17 +63,17 @@ def test_core_loader_accepts_the_plugin() -> None:
     ]
 
 
-def test_core_loader_accepts_api_13_provider_without_artifact_capability() -> None:
-    """Core owns API compatibility; this API 1.3 provider remains host-only."""
+def test_core_loader_accepts_api_16_provider_without_artifact_capability() -> None:
+    """Core owns API compatibility; CUDA authorization is type/lower metadata."""
     registry = load_registry()
     active = registry.active[0]
 
-    assert active.api_version == "1.3"
+    assert active.api_version == "1.6"
     assert getattr(active, "artifact_capability_declared", False) is False
     assert not hasattr(plugin(), "artifact_capability")
 
 
-@pytest.mark.parametrize("host_api", ("1.3", "1.4"))
+@pytest.mark.parametrize("host_api", ("1.6", "1.7"))
 def test_provider_accepts_compatible_host_plugin_api(monkeypatch, host_api: str) -> None:
     monkeypatch.setattr(plugin_api, "PLUGIN_API_VERSION", host_api)
 
@@ -82,7 +82,16 @@ def test_provider_accepts_compatible_host_plugin_api(monkeypatch, host_api: str)
 
 @pytest.mark.parametrize(
     "host_api",
-    ("1.2", "2.0", "invalid", "1", "1.3.0", "1.03", "", pytest.param(None, id="none")),
+    (
+        "1.5",
+        "2.0",
+        "invalid",
+        "1",
+        "1.6.0",
+        "1.06",
+        "",
+        pytest.param(None, id="none"),
+    ),
 )
 def test_all_provider_methods_reject_incompatible_host_plugin_api(
     monkeypatch, host_api: object
@@ -100,7 +109,7 @@ def test_all_provider_methods_reject_incompatible_host_plugin_api(
     )
 
     for call in calls:
-        with pytest.raises(RuntimeError, match="plugin API 1.x with minor >= 3"):
+        with pytest.raises(RuntimeError, match="plugin API 1.x with minor >= 6"):
             call()
 
 
@@ -162,25 +171,36 @@ def test_type_vocabulary_keys_and_boundary() -> None:
         "rextio-tensorflow/tensor-f32-cpu-2d",
         "rextio-tensorflow/tensor-f32-cpu-1d",
         "rextio-tensorflow/tensor-i64-cpu-1d",
+        "rextio-tensorflow/tensor-f32-cuda0-2d",
+        "rextio-tensorflow/tensor-f32-cuda0-1d",
     }
     for plugin_type in types:
         assert isinstance(plugin_type, PluginType)
-        assert plugin_type.rust_type == "rextio_tensorflow_runtime::RxtTfTensor"
         assert plugin_type.conversion is not None
         assert plugin_type.conversion.param_rust == "pyo3::Bound<'py, pyo3::types::PyAny>"
-        assert "rextio_tensorflow_runtime::materialize_tensor" in (
-            plugin_type.conversion.return_expr
-        )
         assert plugin_type.helpers
-        assert "mod rextio_tensorflow_runtime" in plugin_type.helpers[0]
         assert "EagerTensor_Handle" in plugin_type.helpers[0]
         assert "EagerTensorFromHandle" in plugin_type.helpers[0]
         assert "TFE_Execute" in plugin_type.helpers[0]
+        if "cuda0" in plugin_type.key:
+            assert plugin_type.rust_type == (
+                "rextio_tensorflow_cuda_runtime::RxtTfCudaTensor"
+            )
+            assert "mod rextio_tensorflow_cuda_runtime" in plugin_type.helpers[0]
+            assert "materialize_f32_cuda0" in plugin_type.conversion.return_expr
+        else:
+            assert plugin_type.rust_type == "rextio_tensorflow_runtime::RxtTfTensor"
+            assert "mod rextio_tensorflow_runtime" in plugin_type.helpers[0]
+            assert "rextio_tensorflow_runtime::materialize_tensor" in (
+                plugin_type.conversion.return_expr
+            )
     spellings = {a for t in types for a in t.annotations}
     assert spellings == {
         "rextio_tensorflow.types.TensorF32Cpu2D",
         "rextio_tensorflow.types.TensorF32Cpu1D",
         "rextio_tensorflow.types.TensorI64Cpu1D",
+        "rextio_tensorflow.types.TensorF32Cuda0_2D",
+        "rextio_tensorflow.types.TensorF32Cuda0_1D",
     }
     by_key = {plugin_type.key: plugin_type for plugin_type in types}
     i64_conversion = by_key["rextio-tensorflow/tensor-i64-cpu-1d"].conversion

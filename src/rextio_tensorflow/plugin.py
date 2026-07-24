@@ -1,6 +1,6 @@
 """The rextio-tensorflow plugin object and entry-point factory.
 
-Implements plugin API 1.3: describe/covers, annotation vocabulary, claim/lower,
+Implements plugin API 1.6: describe/covers, annotation vocabulary, claim/lower,
 and an empty crate dependency list (native code dlopens the active TensorFlow
 wheel; no Cargo TensorFlow crate). This module never imports tensorflow;
 user-facing types are also import-free.
@@ -27,13 +27,13 @@ if TYPE_CHECKING:
     from rextio.plugins.models import RextioPlugin
 
 PLUGIN_ID = "rextio-tensorflow"
-REQUIRED_PLUGIN_API = "1.3"
+REQUIRED_PLUGIN_API = "1.6"
 
 __all__ = ["PLUGIN_ID", "REQUIRED_PLUGIN_API", "RextioTensorflowPlugin", "plugin"]
 
 
 def _require_compatible_host_api() -> None:
-    """Fail closed unless Core exposes the API 1.3 fields this provider uses."""
+    """Fail closed unless Core exposes the API 1.6 fields this provider uses."""
     from rextio.plugins.api import PLUGIN_API_VERSION
 
     parts = PLUGIN_API_VERSION.split(".") if isinstance(PLUGIN_API_VERSION, str) else []
@@ -42,17 +42,17 @@ def _require_compatible_host_api() -> None:
         and all(part.isascii() and part.isdigit() for part in parts)
         and all(part == "0" or not part.startswith("0") for part in parts)
     )
-    compatible = valid_parts and int(parts[0]) == 1 and int(parts[1]) >= 3
+    compatible = valid_parts and int(parts[0]) == 1 and int(parts[1]) >= 6
     if not compatible:
         raise RuntimeError(
             "rextio-tensorflow requires a compatible Rextio plugin API 1.x "
-            "with minor >= 3 (rextio>=0.1.3,<0.2); this environment advertises "
+            "with minor >= 6 (rextio>=0.1.6,<0.2); this environment advertises "
             f"PLUGIN_API_VERSION={PLUGIN_API_VERSION!r}"
         )
 
 
 class RextioTensorflowPlugin:
-    """Plugin API 1.3 provider for the Alpha float32 CPU TensorFlow slice."""
+    """Plugin API 1.6 provider for CPU Alpha and bounded CUDA build-only lanes."""
 
     plugin_id = PLUGIN_ID
     api_version = REQUIRED_PLUGIN_API

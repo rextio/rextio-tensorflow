@@ -10,15 +10,25 @@ PLUGIN_ID = "rextio-tensorflow"
 TENSOR_F32_CPU_1D = "rextio-tensorflow/tensor-f32-cpu-1d"
 TENSOR_F32_CPU_2D = "rextio-tensorflow/tensor-f32-cpu-2d"
 TENSOR_I64_CPU_1D = "rextio-tensorflow/tensor-i64-cpu-1d"
+TENSOR_F32_CUDA0_1D = "rextio-tensorflow/tensor-f32-cuda0-1d"
+TENSOR_F32_CUDA0_2D = "rextio-tensorflow/tensor-f32-cuda0-2d"
 
 TENSOR_TYPE_KEYS: frozenset[str] = frozenset(
-    {TENSOR_F32_CPU_1D, TENSOR_F32_CPU_2D, TENSOR_I64_CPU_1D}
+    {
+        TENSOR_F32_CPU_1D,
+        TENSOR_F32_CPU_2D,
+        TENSOR_F32_CUDA0_1D,
+        TENSOR_F32_CUDA0_2D,
+        TENSOR_I64_CPU_1D,
+    }
 )
 
 _TENSOR_META: dict[str, tuple[str, str, int]] = {
     TENSOR_F32_CPU_1D: ("f32", "cpu", 1),
     TENSOR_F32_CPU_2D: ("f32", "cpu", 2),
     TENSOR_I64_CPU_1D: ("i64", "cpu", 1),
+    TENSOR_F32_CUDA0_1D: ("f32", "cuda:0", 1),
+    TENSOR_F32_CUDA0_2D: ("f32", "cuda:0", 2),
 }
 
 DIAGNOSTIC_MATMUL = "RXTP-TENSORFLOW-001"
@@ -54,6 +64,11 @@ DIAGNOSTIC_LOG = "RXTP-TENSORFLOW-030"
 DIAGNOSTIC_SQRT = "RXTP-TENSORFLOW-031"
 DIAGNOSTIC_MAXIMUM = "RXTP-TENSORFLOW-032"
 DIAGNOSTIC_MINIMUM = "RXTP-TENSORFLOW-033"
+DIAGNOSTIC_CUDA_E3 = "RXTP-TENSORFLOW-034"
+DIAGNOSTIC_CUDA_MATMUL = "RXTP-TENSORFLOW-035"
+DIAGNOSTIC_CUDA_BIAS_ADD = "RXTP-TENSORFLOW-036"
+DIAGNOSTIC_CUDA_RELU = "RXTP-TENSORFLOW-037"
+DIAGNOSTIC_CUDA_MEAN = "RXTP-TENSORFLOW-038"
 
 RUNTIME_ERRORS = {
     "not_tensor": "rextio-tensorflow: expected a TensorFlow EagerTensor",
@@ -97,6 +112,11 @@ __all__ = [
     "DIAGNOSTIC_ARGMAX",
     "DIAGNOSTIC_ARGMAX_AXIS0",
     "DIAGNOSTIC_BIAS_ADD",
+    "DIAGNOSTIC_CUDA_BIAS_ADD",
+    "DIAGNOSTIC_CUDA_E3",
+    "DIAGNOSTIC_CUDA_MATMUL",
+    "DIAGNOSTIC_CUDA_MEAN",
+    "DIAGNOSTIC_CUDA_RELU",
     "DIAGNOSTIC_DIV_BINOP",
     "DIAGNOSTIC_DIV_CALL",
     "DIAGNOSTIC_EXP",
@@ -128,6 +148,8 @@ __all__ = [
     "RUNTIME_ERRORS",
     "TENSOR_F32_CPU_1D",
     "TENSOR_F32_CPU_2D",
+    "TENSOR_F32_CUDA0_1D",
+    "TENSOR_F32_CUDA0_2D",
     "TENSOR_I64_CPU_1D",
     "TENSOR_TYPE_KEYS",
     "is_tensor_type",
