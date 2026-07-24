@@ -12,6 +12,10 @@ REQUIRED_MEMBERS = (
     Path("ci/cuda-e3-build-only.json"),
     Path("ci/build_cuda_candidate.py"),
     Path("docs/cuda-build-only-0.1.2.md"),
+    Path("scripts/certify_cuda_candidate.py"),
+    Path("scripts/verify_cuda_e3_evidence.py"),
+    Path("tests/test_cuda_e3_manual_harness.py"),
+    Path("tests/test_cuda_e3_evidence.py"),
 )
 
 
