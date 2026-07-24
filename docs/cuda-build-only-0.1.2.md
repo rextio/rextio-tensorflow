@@ -102,9 +102,13 @@ This is a frozen environment, not a portability recipe:
 - CPython 3.11, TensorFlow `2.21.0`, and Rust `1.93.1`.
 - Core checkout exactly `7f47f0ce8cea0b6dbeb7fd3c733f65eeaa6bb5e0` and CUDA
   provider checkout exactly `cf65733f06b91a801f9806367f09948ee7162540`.
-- A clean TensorFlow-plugin checkout of the unreleased `0.1.2` integration
-  branch. Record its full current SHA with `git rev-parse HEAD` and pass that
-  exact, lowercase 40-character value explicitly via
+- A clean TensorFlow-plugin checkout selected by `TF_REF`. After this PR is
+  integrated, set `TF_REF=0.1.2`; that is the default runnable path. Until
+  then, the current `0.1.2` target branch does not contain these two scripts,
+  so a reviewer/operator must set `TF_REF` to the current immutable full
+  PR-head SHA instead. Do not use a moving feature-branch name or record that
+  self-referential SHA in this document. After checkout, derive the full
+  lowercase SHA with `git rev-parse HEAD` and pass it explicitly via
   `--expected-tensorflow-commit`; the harness verifies that it descends from
   the frozen E3 base.
 - Exactly one usable `GPU:0`, with a permitted architecture from this closed
@@ -137,10 +141,15 @@ git clone https://github.com/rextio/rextio-device-cuda.git \
   "$E3_ROOT/checkouts/rextio-device-cuda"
 git -C "$E3_ROOT/checkouts/rextio-device-cuda" checkout --detach \
   cf65733f06b91a801f9806367f09948ee7162540
-git clone --branch 0.1.2 --single-branch \
-  https://github.com/rextio/rextio-tensorflow.git \
-  "$E3_ROOT/checkouts/rextio-tensorflow"
 export TF_ROOT="$E3_ROOT/checkouts/rextio-tensorflow"
+export TF_REF=0.1.2
+# Before this PR merges, replace 0.1.2 above with the current immutable full
+# PR-head SHA. The 0.1.2 default becomes runnable only after integration.
+git clone https://github.com/rextio/rextio-tensorflow.git "$TF_ROOT"
+git -C "$TF_ROOT" fetch --tags origin "$TF_REF"
+git -C "$TF_ROOT" checkout --detach "$TF_REF"
+test -f "$TF_ROOT/scripts/certify_cuda_candidate.py"
+test -f "$TF_ROOT/scripts/verify_cuda_e3_evidence.py"
 export TF_COMMIT="$(git -C "$TF_ROOT" rev-parse HEAD)"
 test "${#TF_COMMIT}" -eq 40
 
