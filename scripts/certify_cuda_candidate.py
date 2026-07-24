@@ -24,7 +24,7 @@ import sysconfig
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, AbstractSet, Any, Callable
 
 if TYPE_CHECKING:
     import tensorflow as tf  # noqa: F401
@@ -53,6 +53,7 @@ RUNTIME_IMAGES = {
     "tensorflow_framework": "tensorflow/libtensorflow_framework.so.2",
     "pywrap_tensorflow_common": "tensorflow/python/lib_pywrap_tensorflow_common.so",
 }
+FROZEN_SMS = frozenset({"sm_60", "sm_61", "sm_70", "sm_72", "sm_75", "sm_80", "sm_86", "sm_87", "sm_89", "sm_90"})
 ATOL = 1e-5
 RTOL = 1e-5
 
@@ -117,7 +118,7 @@ def _canonical_hash(value: Any) -> str:
     ).hexdigest()
 
 
-def validate_requested_paths_and_values(args: argparse.Namespace, allowed_sms: set[str]) -> None:
+def validate_requested_paths_and_values(args: argparse.Namespace, allowed_sms: AbstractSet[str]) -> None:
     """Reject existing destinations and values outside the frozen contract."""
     if args.work_dir.exists():
         raise RuntimeError("work-dir must not exist")
@@ -164,6 +165,19 @@ def validate_checkout(identity: CheckoutIdentity, expected: str, ancestor: str) 
     if identity.head != expected:
         raise RuntimeError(f"checkout does not have expected full commit: {identity.root}")
     subprocess.run(["git", "merge-base", "--is-ancestor", ancestor, identity.head], cwd=identity.root, check=True)
+
+
+def attest_checkouts(
+    core_root: Path, provider_root: Path, tensorflow_root: Path, expected_tensorflow_commit: str
+) -> tuple[CheckoutIdentity, CheckoutIdentity, CheckoutIdentity]:
+    """Authenticate all source checkouts before executing checkout-owned helpers."""
+    core = checkout_identity(core_root)
+    provider = checkout_identity(provider_root)
+    plugin = checkout_identity(tensorflow_root)
+    validate_checkout(core, CORE_COMMIT, CORE_COMMIT)
+    validate_checkout(provider, PROVIDER_COMMIT, PROVIDER_COMMIT)
+    validate_checkout(plugin, expected_tensorflow_commit, BASE_CANDIDATE_COMMIT)
+    return core, provider, plugin
 
 
 def validate_host() -> dict[str, str]:
@@ -274,6 +288,20 @@ def read_build_id(path: Path) -> str | None:
     return match.group(1).lower() if match else None
 
 
+def mapped_canonical_paths(maps: str) -> set[Path]:
+    """Return exact canonical non-deleted file paths recorded in ``/proc/self/maps``."""
+    paths: set[Path] = set()
+    for line in maps.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) != 6:
+            continue
+        mapped = fields[5]
+        if not mapped.startswith("/") or mapped.endswith(" (deleted)"):
+            continue
+        paths.add(Path(mapped).resolve())
+    return paths
+
+
 def capture_runtime_images(wheel_root: Path, maps: str, read_build_id: Callable[[Path], str | None] = read_build_id) -> list[dict[str, Any]]:
     """Bind hashes to the three wheel DSOs actually mapped by this process."""
     canonical = {
@@ -281,10 +309,11 @@ def capture_runtime_images(wheel_root: Path, maps: str, read_build_id: Callable[
         "tensorflow_framework": wheel_root / "tensorflow" / "libtensorflow_framework.so.2",
         "pywrap_tensorflow_common": wheel_root / "tensorflow" / "python" / "lib_pywrap_tensorflow_common.so",
     }
+    mapped_paths = mapped_canonical_paths(maps)
     rows: list[dict[str, Any]] = []
     for role, path in canonical.items():
         resolved = path.resolve()
-        if not path.is_file() or str(resolved) not in maps:
+        if not path.is_file() or resolved not in mapped_paths:
             raise RuntimeError(f"expected TensorFlow runtime image is not mapped: {role}")
         relative = path.relative_to(wheel_root).as_posix()
         build_id = read_build_id(path)
@@ -537,16 +566,15 @@ def main() -> int:
     args = build_parser().parse_args()
     roots = tuple(path.resolve() for path in (args.tensorflow_root, args.core_root, args.provider_root))
     tensorflow_root, core_root, provider_root = roots
-    verifier = _load_verifier_module(tensorflow_root)
-    validate_requested_paths_and_values(args, verifier.SMS)
-    toolchain = validate_host()
+    validate_requested_paths_and_values(args, FROZEN_SMS)
     validate_destinations_are_outside_checkouts(args, roots)
-    core = checkout_identity(core_root)
-    provider = checkout_identity(provider_root)
-    plugin = checkout_identity(tensorflow_root)
-    validate_checkout(core, CORE_COMMIT, CORE_COMMIT)
-    validate_checkout(provider, PROVIDER_COMMIT, PROVIDER_COMMIT)
-    validate_checkout(plugin, args.expected_tensorflow_commit, BASE_CANDIDATE_COMMIT)
+    core, provider, plugin = attest_checkouts(
+        core_root, provider_root, tensorflow_root, args.expected_tensorflow_commit
+    )
+    verifier = _load_verifier_module(tensorflow_root)
+    if verifier.SMS != FROZEN_SMS:
+        raise RuntimeError("attested verifier allowed architectures changed")
+    toolchain = validate_host()
     _add_sources(tensorflow_root, core_root, provider_root)
     import tensorflow as tf
     if tf.__version__ != "2.21.0":

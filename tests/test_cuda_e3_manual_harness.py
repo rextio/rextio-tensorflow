@@ -261,6 +261,47 @@ def test_verifier_module_is_loaded_from_attested_tensorflow_root(
     assert Path(loaded.__file__).resolve() == verifier.resolve()
 
 
+def test_main_attests_all_checkouts_before_loading_verifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    args = argparse.Namespace(
+        tensorflow_root=tmp_path / "tensorflow",
+        core_root=tmp_path / "core",
+        provider_root=tmp_path / "provider",
+        expected_tensorflow_commit="a" * 40,
+        work_dir=tmp_path / "work",
+        output=tmp_path / "evidence.json",
+        sm="sm_80",
+    )
+    order: list[str] = []
+
+    class Parser:
+        def parse_args(self):
+            return args
+
+    def attest(*_args):
+        order.append("attest")
+        return (object(), object(), object())
+
+    def load_verifier(_root):
+        order.append("load-verifier")
+        return type("Verifier", (), {"SMS": module.FROZEN_SMS})()
+
+    def stop_after_loading():
+        order.append("validate-host")
+        raise RuntimeError("stop test")
+
+    monkeypatch.setattr(module, "build_parser", lambda: Parser())
+    monkeypatch.setattr(module, "attest_checkouts", attest)
+    monkeypatch.setattr(module, "_load_verifier_module", load_verifier)
+    monkeypatch.setattr(module, "validate_host", stop_after_loading)
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        module.main()
+    assert order == ["attest", "load-verifier", "validate-host"]
+
+
 def test_provider_observations_are_validated_and_bound_to_hashes() -> None:
     module = _module()
     profile = {"target_triple": module.TARGET}
@@ -346,6 +387,27 @@ def test_runtime_dso_capture_requires_expected_mapped_wheel_images(tmp_path: Pat
         module.capture_runtime_images(wheel, maps.replace(str(cc), ""), read_build_id=lambda _: "x")
     with pytest.raises(RuntimeError, match="build ID"):
         module.capture_runtime_images(wheel, maps, read_build_id=lambda _: None)
+
+
+def test_runtime_dso_capture_rejects_suffix_and_deleted_map_entries(tmp_path: Path) -> None:
+    module = _module()
+    wheel = tmp_path.resolve()
+    paths = (
+        wheel / "tensorflow" / "libtensorflow_cc.so.2",
+        wheel / "tensorflow" / "libtensorflow_framework.so.2",
+        wheel / "tensorflow" / "python" / "lib_pywrap_tensorflow_common.so",
+    )
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(path.name.encode())
+
+    suffix_maps = "\n".join(f"7f-8 r-xp 0 00:00 0 {path}.shadow" for path in paths)
+    with pytest.raises(RuntimeError, match="mapped"):
+        module.capture_runtime_images(wheel, suffix_maps, read_build_id=lambda _: "deadbeef")
+
+    deleted_maps = "\n".join(f"7f-8 r-xp 0 00:00 0 {path} (deleted)" for path in paths)
+    with pytest.raises(RuntimeError, match="mapped"):
+        module.capture_runtime_images(wheel, deleted_maps, read_build_id=lambda _: "deadbeef")
 
 
 def test_execution_payload_records_only_observed_boundaries_and_no_profiler_claims() -> None:
