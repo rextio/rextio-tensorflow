@@ -129,6 +129,8 @@ def test_cargo_build_is_locked_pinned_and_installs_exact_extension(
 
     def fake_run(command, **kwargs):
         calls.append((command, kwargs["env"]))
+        if command[2] == "generate-lockfile":
+            (rust_dir / "Cargo.lock").write_text("# generated\n", encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -139,11 +141,99 @@ def test_cargo_build_is_locked_pinned_and_installs_exact_extension(
         "PYO3_PYTHON": "/venv/bin/python",
     }
     installed = module.build_generated_extension(rust_dir, python_dir, environment)
-    assert calls[0][0][:4] == ["cargo", "+1.93.1", "build", "--locked"]
-    assert "--release" in calls[0][0]
+    assert calls[0][0][:3] == ["cargo", "+1.93.1", "generate-lockfile"]
     assert calls[0][1] == environment
+    assert calls[1][0][:4] == ["cargo", "+1.93.1", "build", "--locked"]
+    assert "--release" in calls[1][0]
+    assert calls[1][1] == environment
     assert installed == python_dir / "_rextio_native.cpython-311-x86_64-linux-gnu.so"
     assert installed.read_bytes() == b"native"
+
+
+def test_cargo_lockfile_must_be_created_before_locked_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    rust_dir = tmp_path / "rust"
+    (rust_dir / "target" / "release").mkdir(parents=True)
+    (rust_dir / "Cargo.toml").write_text("[package]\nname='x'\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="Cargo.lock"):
+        module.build_generated_extension(rust_dir, tmp_path / "python", {"PATH": "/usr/bin"})
+    assert calls == [["cargo", "+1.93.1", "generate-lockfile", "--manifest-path", str(rust_dir / "Cargo.toml")]]
+
+
+def test_native_loader_evicts_stale_cuda_app_and_binds_current_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    python_dir = tmp_path / "python"
+    package = python_dir / "cuda_app"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "kernels.py").write_text(
+        "import _rextio_native\n\ndef inference():\n    return _rextio_native.IDENTITY\n",
+        encoding="utf-8",
+    )
+    extension = python_dir / "_rextio_native.py"
+    extension.write_text("IDENTITY = 'current'\n", encoding="utf-8")
+
+    stale_package = type(sys)("cuda_app")
+    stale_kernels = type(sys)("cuda_app.kernels")
+    stale_kernels.inference = lambda: "stale"
+    monkeypatch.setitem(sys.modules, "cuda_app", stale_package)
+    monkeypatch.setitem(sys.modules, "cuda_app.kernels", stale_kernels)
+    monkeypatch.setitem(sys.modules, "cuda_app.stale", type(sys)("cuda_app.stale"))
+
+    inference = module._load_native_inference(python_dir, extension)
+
+    assert inference() == "current"
+    assert Path(inference.__code__.co_filename).resolve().is_relative_to(python_dir)
+    assert Path(sys.modules["_rextio_native"].__file__).resolve() == extension.resolve()
+    assert "cuda_app.stale" not in sys.modules
+
+
+def test_native_loader_rejects_native_module_from_another_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    python_dir = tmp_path / "python"
+    package = python_dir / "cuda_app"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "kernels.py").write_text("import _rextio_native\ndef inference(): pass\n", encoding="utf-8")
+    (python_dir / "_rextio_native.py").write_text("", encoding="utf-8")
+    expected_extension = tmp_path / "expected.py"
+    expected_extension.write_text("", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="different path"):
+        module._load_native_inference(python_dir, expected_extension)
+
+
+def test_candidate_build_module_is_loaded_from_attested_tensorflow_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    tensorflow_root = tmp_path / "tensorflow"
+    candidate = tensorflow_root / "ci" / "build_cuda_candidate.py"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("MARKER = 'attested'\n", encoding="utf-8")
+    shadow = type(sys)("ci")
+    shadow.build_cuda_candidate = type(sys)("ci.build_cuda_candidate")
+    shadow.build_cuda_candidate.MARKER = "ambient"
+    monkeypatch.setitem(sys.modules, "ci", shadow)
+    monkeypatch.setitem(sys.modules, "ci.build_cuda_candidate", shadow.build_cuda_candidate)
+
+    loaded = module._load_candidate_build_module(tensorflow_root)
+
+    assert loaded.MARKER == "attested"
+    assert Path(loaded.__file__).resolve() == candidate.resolve()
 
 
 def test_provider_observations_are_validated_and_bound_to_hashes() -> None:
@@ -355,6 +445,7 @@ def test_source_contains_explicit_tensorflow_before_extension_and_provenance_gua
         '"readelf"',
         "dladdr",
         "sysconfig.get_config_var(\"EXT_SUFFIX\")",
-        'sys.modules.pop("_rextio_native"',
+        'name == "_rextio_native"',
+        "importlib.invalidate_caches()",
     ):
         assert token in source

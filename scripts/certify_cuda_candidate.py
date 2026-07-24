@@ -11,6 +11,9 @@ from __future__ import annotations
 import argparse
 import gc
 import hashlib
+import importlib
+import importlib.util
+import inspect
 import json
 import os
 import platform
@@ -188,7 +191,16 @@ def assert_frozen_source_contract(rust: str) -> None:
 
 def build_generated_extension(rust_dir: Path, python_dir: Path, environment: dict[str, str]) -> Path:
     """Build locked with Rust 1.93.1 and install the exact CPython suffix."""
-    command = ["cargo", "+1.93.1", "build", "--locked", "--release", "--manifest-path", str(rust_dir / "Cargo.toml")]
+    manifest = rust_dir / "Cargo.toml"
+    lockfile = rust_dir / "Cargo.lock"
+    subprocess.run(
+        ["cargo", "+1.93.1", "generate-lockfile", "--manifest-path", str(manifest)],
+        check=True,
+        env=environment,
+    )
+    if not lockfile.is_file() or lockfile.stat().st_size == 0:
+        raise RuntimeError("Cargo.lock was not created by pinned lockfile generation")
+    command = ["cargo", "+1.93.1", "build", "--locked", "--release", "--manifest-path", str(manifest)]
     subprocess.run(command, check=True, env=environment)
     candidates = tuple((rust_dir / "target" / "release").glob("*rextio_native*.so"))
     if len(candidates) != 1 or not candidates[0].is_file() or candidates[0].stat().st_size == 0:
@@ -236,9 +248,12 @@ def validate_and_bind_provider_plan(plan: dict[str, Any], sm: str, probe_sha256:
     observed = {row.get("key"): row.get("value") for row in observations if isinstance(row, dict)}
     if observed.get("selected.device") != "0" or observed.get("selected.sm") != sm or observed.get("probe.schema") != "1" or observed.get("framework.runtime") != "tensorflow-tfe":
         raise RuntimeError("provider observations do not bind the selected CUDA E3 capability")
+    driver_text = observed.get("driver.version")
+    if not isinstance(driver_text, str):
+        raise RuntimeError("provider driver observation is invalid")
     try:
-        driver = int(observed["driver.version"])
-    except (KeyError, TypeError, ValueError) as error:
+        driver = int(driver_text)
+    except ValueError as error:
         raise RuntimeError("provider driver observation is invalid") from error
     if driver < 12_000:
         raise RuntimeError("provider driver observation is too old")
@@ -316,9 +331,39 @@ def _build_probe(provider_root: Path) -> Path:
     return probe.resolve()
 
 
-def generate_candidate(work: Path, provider_root: Path, sm: str) -> tuple[Path, dict[str, Any], Path]:
+def _load_candidate_build_module(tensorflow_root: Path) -> Any:
+    """Load the attested candidate harness without consulting ambient ``ci`` modules."""
+    root = tensorflow_root.resolve()
+    candidate = (root / "ci" / "build_cuda_candidate.py").resolve()
+    if not candidate.is_relative_to(root) or not candidate.is_file():
+        raise RuntimeError("attested TensorFlow candidate build module is unavailable")
+    spec = importlib.util.spec_from_file_location(
+        "_rextio_tensorflow_cuda_e3_candidate_build", candidate
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("attested TensorFlow candidate build module is not loadable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
+    return module
+
+
+def _load_verifier_module() -> Any:
+    """Load the local offline verifier for package and direct-script invocation."""
+    try:
+        return importlib.import_module("scripts.verify_cuda_e3_evidence")
+    except ModuleNotFoundError:
+        return importlib.import_module("verify_cuda_e3_evidence")
+
+
+def generate_candidate(
+    work: Path, tensorflow_root: Path, provider_root: Path, sm: str
+) -> tuple[Path, dict[str, Any], Path]:
     """Generate once through actual probe-backed provider orchestration."""
-    from ci import build_cuda_candidate as build
     from rextio.analyzer.project_scanner import analyze_project
     from rextio.build.orchestrator import generate_source_artifact
     from rextio.config.schema import PluginConfig, RextioConfig
@@ -330,6 +375,7 @@ def generate_candidate(work: Path, provider_root: Path, sm: str) -> tuple[Path, 
     from rextio_device_cuda.provider import CudaDeviceProvider
     from rextio_tensorflow.plugin import PLUGIN_ID
 
+    build = _load_candidate_build_module(tensorflow_root)
     probe = _build_probe(provider_root)
     probe_before = _sha256(probe)
     build._write_fixture(work)
@@ -356,11 +402,27 @@ def generate_candidate(work: Path, provider_root: Path, sm: str) -> tuple[Path, 
     return rust_dir, validate_and_bind_provider_plan(plan, sm, probe_before), probe
 
 
-def _load_native_inference(python_dir: Path):
+def _load_native_inference(python_dir: Path, extension: Path):
+    """Import only this run's generated wrapper and exact native extension."""
+    python_dir = python_dir.resolve()
+    extension = extension.resolve()
     sys.path.insert(0, str(python_dir))
-    sys.modules.pop("_rextio_native", None)
+    for name in tuple(sys.modules):
+        if name == "_rextio_native" or name == "cuda_app" or name.startswith("cuda_app."):
+            sys.modules.pop(name, None)
+    importlib.invalidate_caches()
     os.environ["REXTIO_NATIVE_MODE"] = "native"
     from cuda_app.kernels import inference
+    try:
+        wrapper_path = Path(inspect.getfile(inference)).resolve()
+    except (OSError, TypeError) as error:
+        raise RuntimeError("generated inference wrapper has no inspectable source path") from error
+    if not wrapper_path.is_relative_to(python_dir):
+        raise RuntimeError("generated inference wrapper was imported from a different path")
+    native_module = sys.modules.get("_rextio_native")
+    native_file = getattr(native_module, "__file__", None)
+    if not isinstance(native_file, str) or Path(native_file).resolve() != extension:
+        raise RuntimeError("generated native extension was imported from a different path")
     return inference
 
 
@@ -379,14 +441,14 @@ def _assert_tensorflow_runtime_is_loaded(tf: Any) -> None:
         raise RuntimeError("dynamic loader does not expose dladdr")
 
 
-def execute_e3(tf: Any, python_dir: Path) -> ExecutionResult:
+def execute_e3(tf: Any, python_dir: Path, extension: Path) -> ExecutionResult:
     """Exercise parity, lifetime, and only the five closed negative boundaries."""
     tf.config.set_soft_device_placement(False)
     tf.config.experimental.set_synchronous_execution(True)
     if not tf.executing_eagerly() or len(tf.config.list_logical_devices("GPU")) != 1:
         raise RuntimeError("requires one eager TensorFlow GPU:0")
     import_generated_inference = _load_native_inference
-    inference = import_generated_inference(python_dir)
+    inference = import_generated_inference(python_dir, extension)
     with tf.device("/GPU:0"):
         x = tf.constant([[1., 2., 3.], [4., 5., 6.], [7., 8., 9.], [2., 1., 0.]], tf.float32)
         weight = tf.constant([[1., 0.], [0., 1.], [1., 1.]], tf.float32)
@@ -456,10 +518,7 @@ def build_payload(*, source: dict[str, Any], environment: dict[str, Any], toolch
 
 def main() -> int:
     """Collect one new self-attested evidence envelope in the closed schema."""
-    try:
-        from scripts import verify_cuda_e3_evidence as verifier
-    except ModuleNotFoundError:
-        import verify_cuda_e3_evidence as verifier
+    verifier = _load_verifier_module()
     args = build_parser().parse_args()
     validate_requested_paths_and_values(args, verifier.SMS)
     toolchain = validate_host()
@@ -479,11 +538,13 @@ def main() -> int:
     _assert_tensorflow_runtime_is_loaded(tf)
     args.work_dir.mkdir(parents=False)
     try:
-        rust_dir, bindings, probe = generate_candidate(args.work_dir, provider_root, args.sm)
+        rust_dir, bindings, probe = generate_candidate(
+            args.work_dir, tensorflow_root, provider_root, args.sm
+        )
         environment = dict(os.environ, PYO3_PYTHON=sys.executable)
         extension = build_generated_extension(rust_dir, rust_dir.parent / "python", environment)
         extension_before = _sha256(extension)
-        result = execute_e3(tf, rust_dir.parent / "python")
+        result = execute_e3(tf, rust_dir.parent / "python", extension)
         if _sha256(extension) != extension_before:
             raise RuntimeError("native extension changed during execution")
         wheel_root = Path(tf.__file__).resolve().parent.parent
