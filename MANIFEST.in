@@ -2,3 +2,7 @@ include ci/platform-contract.json
 include ci/cuda-e3-build-only.json
 include ci/build_cuda_candidate.py
 include docs/cuda-build-only-0.1.2.md
+include scripts/certify_cuda_candidate.py
+include scripts/verify_cuda_e3_evidence.py
+include tests/test_cuda_e3_manual_harness.py
+include tests/test_cuda_e3_evidence.py

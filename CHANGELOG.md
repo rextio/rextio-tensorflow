@@ -22,6 +22,11 @@ Changelog and Semantic Versioning conventions.
   CUDA-first fail-closed claim/lower routing, a machine-readable non-certifying
   contract, and a synthetic-provider Linux compile/link-only CI gate that
   never imports TensorFlow or loads/executes the candidate.
+- Add an opt-in, manual real-NVIDIA first-stage evidence producer and offline
+  verifier. They require the frozen clean candidate checkout and record native
+  execution, parity, and lifetime evidence only; kernel activity and runtime
+  transfer profiling remain explicitly unverified, and
+  `support_claim=false` / `certification_ready=false` remain unchanged.
 - Add rank-1 float32 CPU `tf.nn.softmax` with the final axis omitted or
   supplied as literal positional/keyword `axis=0`. The lowering reuses the
   owned same-wheel TFE `Softmax` unary path, preserves the existing explicit

@@ -24,12 +24,24 @@ certification, release, or performance claim.
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
-| CUDA candidate | **Build-only**, `support_claim=false`, `certification_ready=false`; no real-GPU evidence |
+| CUDA candidate | Build-only hosted CI plus opt-in first-stage real-NVIDIA evidence; `support_claim=false`, `certification_ready=false` |
 
 The unreleased branch requires Core `rextio>=0.1.6,<0.2` and plugin API
 **1.6**. It rejects boundary-free standalone Rust lowering. CUDA lowering also
 requires exact authorization from
 `rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64`.
+
+The hosted CUDA job is compile/link-only: it never installs/imports TensorFlow,
+loads the extension, or executes CUDA. A separately opt-in real-NVIDIA
+first-stage harness may produce self-attested execution/parity/lifetime
+evidence; its closed schema requires `kernel_activity_verified=false` and
+`runtime_transfer_profiled=false`, and preserves `support_claim=false` and
+`certification_ready=false`. The offline verifier establishes schema and
+payload integrity only, not GPU execution, hardware certification, or CUDA
+support. See
+[the CUDA build-only and manual-evidence contract](docs/cuda-build-only-0.1.2.md)
+for the exact Linux GNU/CPython 3.11/TF 2.21.0/Rust 1.93.1 pins, clean
+candidate checkout, GPU:0/permitted-SM boundary, and commands.
 
 Final release verification completed on 2026-07-18: GitHub Actions
 [run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
