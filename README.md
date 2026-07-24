@@ -33,10 +33,12 @@ requires exact authorization from
 
 The hosted CUDA job is compile/link-only: it never installs/imports TensorFlow,
 loads the extension, or executes CUDA. A separately opt-in real-NVIDIA
-first-stage harness can record execution/parity/lifetime evidence, but it
-still records `native_extension_executed=true`,
-`kernel_activity_verified=false`, and `runtime_transfer_profiled=false`.
-That evidence is not kernel/profile certification or CUDA support. See
+first-stage harness may produce self-attested execution/parity/lifetime
+evidence; its closed schema requires `kernel_activity_verified=false` and
+`runtime_transfer_profiled=false`, and preserves `support_claim=false` and
+`certification_ready=false`. The offline verifier establishes schema and
+payload integrity only, not GPU execution, hardware certification, or CUDA
+support. See
 [the CUDA build-only and manual-evidence contract](docs/cuda-build-only-0.1.2.md)
 for the exact Linux GNU/CPython 3.11/TF 2.21.0/Rust 1.93.1 pins, clean
 candidate checkout, GPU:0/permitted-SM boundary, and commands.
