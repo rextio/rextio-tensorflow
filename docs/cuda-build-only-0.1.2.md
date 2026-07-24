@@ -50,9 +50,11 @@ Generated Rust uses the separate `rextio_tensorflow_cuda_runtime` module and
 4. Enumerates devices with `TFE_ContextListDevices` and the `TF_DeviceList`
    API, selects exactly one fully qualified type `GPU` ordinal 0 name, and
    requires exact backing-device equality on every tensor.
-5. Rejects active reverse-mode tapes and forward accumulators through the
-   exact pinned `TFE_Py_TapeSetPossibleGradientTypes(PyObject*) -> PyObject*`
-   ABI before copying an input handle.
+5. Rejects when a reverse-mode tape or forward accumulator may record the
+   supplied input through the exact pinned
+   `TFE_Py_TapeSetPossibleGradientTypes(PyObject*) -> PyObject*` ABI before
+   copying its handle. An active recorder that is not watching these inputs
+   does not change this slice's gradient semantics and is not rejected.
 6. Sets every operation to the exact enumerated device and validates every
    intermediate/output dtype, rank, and backing device.
 

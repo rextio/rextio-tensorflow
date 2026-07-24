@@ -309,7 +309,8 @@ def _build_cuda_runtime() -> str:
         let possible: i64 = result.extract()?;
         if possible != 0 {
             return Err(runtime_error(format!(
-                "CUDA E3 requires no active backward tape or forward accumulator; \
+                "CUDA E3 requires that no backward tape or forward accumulator \
+                 would record this input; \
                  possible gradient type was {possible}"
             )));
         }
@@ -407,7 +408,10 @@ def _build_cuda_runtime() -> str:
         "    pub fn reduce_mean_axis1(",
         "remove non-E3 reductions before mean axis1",
     )
-    tail_start = "    pub fn reduce_mean_axis1_keepdims("
+    tail_start = (
+        "    /// Reduce mean along statically-proven axis [1], keep_dims=true.\n"
+        "    pub fn reduce_mean_axis1_keepdims("
+    )
     if source.count(tail_start) != 1:
         raise RuntimeError("rextio-tensorflow CUDA helper source drift at reduction tail")
     final_module_close = source.rfind("\n}")

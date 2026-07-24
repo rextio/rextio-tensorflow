@@ -388,6 +388,8 @@ def test_cuda_runtime_is_separate_and_contains_exact_safety_anchors() -> None:
     assert 'name.ends_with("/device:GPU:0")' in helper
     assert "if actual != expected" in helper
     assert "possible != 0" in helper
+    assert "would record this input" in helper
+    assert "requires no active backward tape" not in helper
     assert (
         "9056fbc9ba04235810b71ae6cbd958a196e8804fb53bbcffbf3e23b56155f124"
         in helper
@@ -417,3 +419,10 @@ def test_cuda_runtime_is_separate_and_contains_exact_safety_anchors() -> None:
         "pub fn extract_i64",
     ):
         assert excluded_public_helper not in helper
+    tail = helper.rstrip().splitlines()
+    assert tail[-1] == "}"
+    assert not tail[-2].lstrip().startswith("///")
+    assert (
+        "/// Reduce mean along statically-proven axis [1], keep_dims=true."
+        not in helper
+    )

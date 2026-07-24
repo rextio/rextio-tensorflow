@@ -15,8 +15,8 @@ Changelog and Semantic Versioning conventions.
 - Add separate generated `rextio_tensorflow_cuda_runtime` /
   `RxtTfCudaTensor` boundaries with exact TensorFlow 2.21 wheel reuse,
   per-symbol provenance, full `TFE_ContextListDevices` GPU:0 enumeration,
-  exact backing-device equality, RAII ownership, and active backward-tape /
-  forward-accumulator rejection.
+  exact backing-device equality, RAII ownership, and rejection when a
+  backward tape or forward accumulator may record the supplied inputs.
 - Add API 1.6 `DeviceValueMetadata`, exact
   `rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64` authorization,
   CUDA-first fail-closed claim/lower routing, a machine-readable non-certifying

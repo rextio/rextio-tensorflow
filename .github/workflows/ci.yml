@@ -250,8 +250,12 @@ jobs:
           python -m pip install --upgrade pip==26.1
           python -m pip install \
             "git+https://github.com/rextio/rextio.git@${CORE_COMMIT}" \
-            "git+https://github.com/rextio/rextio-device-cuda.git@${CUDA_PROVIDER_COMMIT}" \
             pytest==9.1.1
+          # Core API 1.6 is pinned by commit but still truthfully reports its
+          # pre-release package metadata version 0.1.5. Install the provider
+          # without dependency resolution until Core 0.1.6 is published.
+          python -m pip install --no-deps \
+            "git+https://github.com/rextio/rextio-device-cuda.git@${CUDA_PROVIDER_COMMIT}"
           python -m pip install --no-deps -e .
           python - <<'PY'
           import sys

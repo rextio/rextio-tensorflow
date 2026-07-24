@@ -63,7 +63,7 @@ plugin registration, the generated runtime helper
 | Device | CPU lane: **`CPU:0`**; CUDA candidate: exact enumerated **`GPU:0`** | CUDA uses `TFE_ContextListDevices` and exact full-name equality |
 | Dtype | **float32 operation inputs/intermediates; default-int64 ArgMax output** | Runtime checks float32 rank-1/2 inputs and exact int64 rank-1 classification output/boundaries |
 | Ranks | **float32 rank 1/2; int64 rank 1 only** | Type vocabulary + claim/lower and boundary checks |
-| Execution surface | **Inference/no-grad only** | CUDA rejects active backward tapes and forward accumulators before handle copying or execution |
+| Execution surface | **Inference/no-grad only** | CUDA rejects when a backward tape or forward accumulator may record the supplied inputs, before handle copying or execution |
 | CUDA build toolchain | Rust **1.93.1**, CPython **3.11**, Linux x86_64 GNU | Exact build-only CI contract |
 | Certified Rust toolchain | `rustc 1.93.1`, `cargo 1.93.1` on `aarch64-apple-darwin` | Used for the current real-Cargo Alpha evidence; this repo has no `rust-toolchain.toml` |
 | Rust TF crates | **None** | `crate_dependencies() == ()`; helpers must not use `tensorflow-sys` / high-level `tensorflow` crate |
