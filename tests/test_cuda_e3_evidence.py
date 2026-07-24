@@ -13,6 +13,7 @@ import pytest
 from scripts.verify_cuda_e3_evidence import (
     BASE_CANDIDATE_COMMIT,
     EvidenceError,
+    MAX_BYTES,
     canonical_bytes,
     canonical_json,
     make_envelope,
@@ -344,7 +345,7 @@ def test_malformed_nonfinite_oversize_and_depth_are_rejected(tmp_path: Path) -> 
         with pytest.raises(EvidenceError):
             validate_document(raw)
     with pytest.raises(EvidenceError, match="maximum size"):
-        validate_document(b" " * 131_073)
+        validate_document(b" " * (MAX_BYTES + 1))
     value: object = {}
     cursor = value
     for _ in range(14):
@@ -364,6 +365,41 @@ def test_malformed_nonfinite_oversize_and_depth_are_rejected(tmp_path: Path) -> 
     )
     assert completed.returncode == 1
     assert "schema/integrity verification failed" in completed.stderr
+
+
+def test_cli_rejects_oversized_input_without_unbounded_read(tmp_path: Path) -> None:
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b" " * (MAX_BYTES + 1))
+
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), str(oversized)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "evidence exceeds maximum size" in completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
+def test_deep_json_recursion_is_a_controlled_verifier_failure(tmp_path: Path) -> None:
+    deeply_nested = b"[" * 20_000 + b"0" + b"]" * 20_000 + b"\n"
+    with pytest.raises(EvidenceError):
+        validate_document(deeply_nested)
+
+    evidence = tmp_path / "deep.json"
+    evidence.write_bytes(deeply_nested)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), str(evidence)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "schema/integrity verification failed" in completed.stderr
+    assert "Traceback" not in completed.stderr
 
 
 def test_cli_help_names_schema_and_integrity_scope() -> None:

@@ -596,15 +596,21 @@ def validate_document(raw: bytes) -> dict[str, Any]:
                 EvidenceError(f"non-finite JSON value {value}")
             ),
         )
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise EvidenceError(f"malformed evidence JSON: {exc}") from exc
     try:
         expected = canonical_bytes(envelope)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise EvidenceError(f"evidence cannot be canonicalized: {exc}") from exc
     if raw != expected:
         raise EvidenceError("evidence bytes are not canonical JSON with exactly one final newline")
     return validate_envelope(envelope)
+
+
+def read_document(path: Path) -> bytes:
+    """Read no more than the verifier's accepted document size plus one byte."""
+    with path.open("rb") as handle:
+        return handle.read(MAX_BYTES + 1)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -617,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        payload = validate_document(args.evidence.read_bytes())
+        payload = validate_document(read_document(args.evidence))
     except (OSError, EvidenceError) as exc:
         print(f"evidence schema/integrity verification failed: {exc}", file=sys.stderr)
         return 1
