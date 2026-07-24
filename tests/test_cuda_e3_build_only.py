@@ -38,6 +38,7 @@ from rextio_tensorflow.plugin_types import CUDA_RUNTIME_REQUIREMENTS, plugin_typ
 from rextio_tensorflow.rust_snippets.cuda_runtime import cuda_runtime_module_helpers
 from rextio_tensorflow.rust_snippets.runtime import runtime_module_helpers
 from rextio.targets.models import TargetSpec
+from ci.build_cuda_candidate import _assert_inference_call_order
 
 PLUGIN = plugin()
 CONFIG = RextioConfig()
@@ -290,23 +291,95 @@ def test_machine_readable_contract_is_explicitly_non_certifying() -> None:
     contract = json.loads(
         (root / "ci/cuda-e3-build-only.json").read_text(encoding="utf-8")
     )
-    assert contract["support_claim"] is False
-    assert contract["certification_ready"] is False
-    assert contract["real_gpu_evidence"] is False
-    assert contract["provider_commit"] == "cf65733f06b91a801f9806367f09948ee7162540"
-    assert contract["hosted_ci"] == {
-        "synthetic_probe": True,
-        "generate": True,
-        "compile_link_cdylib": True,
-        "import_tensorflow": False,
-        "load_extension": False,
-        "execute_extension": False,
-        "execute_cuda": False,
+    assert contract == {
+        "schema_version": 1,
+        "candidate": "tensorflow-cuda-e3",
+        "support_claim": False,
+        "certification_ready": False,
+        "real_gpu_evidence": False,
+        "plugin_api": "1.6",
+        "core_commit": "7f47f0ce8cea0b6dbeb7fd3c733f65eeaa6bb5e0",
+        "provider_commit": "cf65733f06b91a801f9806367f09948ee7162540",
+        "provider_id": "rextio-device-cuda",
+        "capability_id": "cuda-tensorflow-tfe-linux-x86_64",
+        "target": "x86_64-unknown-linux-gnu",
+        "python": "3.11",
+        "rust": "1.93.1",
+        "tensorflow": "2.21.0",
+        "device": "cuda:0",
+        "dtype": "float32",
+        "ranks": [1, 2],
+        "input_residency": "device",
+        "operations": [
+            "tf.matmul",
+            "tf.nn.bias_add",
+            "tf.nn.relu",
+            "tf.reduce_mean-axis1",
+        ],
+        "hosted_ci": {
+            "synthetic_probe": True,
+            "generate": True,
+            "compile_link_cdylib": True,
+            "import_tensorflow": False,
+            "load_extension": False,
+            "execute_extension": False,
+            "execute_cuda": False,
+        },
+        "resource_contracts": [
+            "framework.tensor:framework:borrow-validate",
+            "framework.eager-context:framework:borrow-validate",
+        ],
     }
-    assert contract["resource_contracts"] == [
-        "framework.tensor:framework:borrow-validate",
-        "framework.eager-context:framework:borrow-validate",
-    ]
+
+
+def test_generated_inference_call_order_ignores_runtime_helper_definitions() -> None:
+    calls = (
+        "rextio_tensorflow_cuda_runtime::matmul(",
+        "rextio_tensorflow_cuda_runtime::bias_add(",
+        "rextio_tensorflow_cuda_runtime::relu(",
+        "rextio_tensorflow_cuda_runtime::reduce_mean_axis1(",
+    )
+    helper_noise = "\n".join(f"fn helper() {{ {call}value); }}" for call in calls)
+    body = "\n".join(f"let value = {call}value)?;" for call in calls)
+    rust = (
+        f"{helper_noise}\n"
+        "fn cuda_app__kernels__inference() {\n"
+        f"{body}\n"
+        "}\n"
+        f"{helper_noise}\n"
+    )
+    _assert_inference_call_order(rust)
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        (
+            "rextio_tensorflow_cuda_runtime::matmul(x);"
+            "rextio_tensorflow_cuda_runtime::bias_add(x);"
+            "rextio_tensorflow_cuda_runtime::relu(x);"
+        ),
+        (
+            "rextio_tensorflow_cuda_runtime::matmul(x);"
+            "rextio_tensorflow_cuda_runtime::matmul(x);"
+            "rextio_tensorflow_cuda_runtime::bias_add(x);"
+            "rextio_tensorflow_cuda_runtime::relu(x);"
+            "rextio_tensorflow_cuda_runtime::reduce_mean_axis1(x);"
+        ),
+        (
+            "rextio_tensorflow_cuda_runtime::bias_add(x);"
+            "rextio_tensorflow_cuda_runtime::matmul(x);"
+            "rextio_tensorflow_cuda_runtime::relu(x);"
+            "rextio_tensorflow_cuda_runtime::reduce_mean_axis1(x);"
+        ),
+    ),
+)
+def test_generated_inference_call_order_rejects_missing_duplicate_or_reordered(
+    body: str,
+) -> None:
+    rust = f"fn cuda_app__kernels__inference() {{{body}}}"
+    with pytest.raises(RuntimeError, match="call (counts|order) changed"):
+        _assert_inference_call_order(rust)
 
 
 def test_analyzer_accepts_only_the_exact_cuda_e3_chain(tmp_path: Path) -> None:

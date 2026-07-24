@@ -132,6 +132,47 @@ def _write_fixture(root: Path) -> None:
     (package / "kernels.py").write_text(KERNELS, encoding="utf-8")
 
 
+def _rust_function_body(source: str, function_name: str) -> str:
+    """Return one generated function body using its balanced brace scope."""
+    marker = f"fn {function_name}"
+    if source.count(marker) != 1:
+        raise RuntimeError(
+            f"expected exactly one generated {function_name} function, "
+            f"found {source.count(marker)}"
+        )
+    signature = source.index(marker)
+    opening = source.find("{", signature)
+    if opening < 0:
+        raise RuntimeError(f"generated {function_name} function has no body")
+    depth = 0
+    for index in range(opening, len(source)):
+        character = source[index]
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening + 1 : index]
+    raise RuntimeError(f"generated {function_name} function body is unterminated")
+
+
+def _assert_inference_call_order(rust: str) -> None:
+    """Require each frozen E3 call exactly once and in strict body order."""
+    body = _rust_function_body(rust, "cuda_app__kernels__inference")
+    calls = (
+        "rextio_tensorflow_cuda_runtime::matmul(",
+        "rextio_tensorflow_cuda_runtime::bias_add(",
+        "rextio_tensorflow_cuda_runtime::relu(",
+        "rextio_tensorflow_cuda_runtime::reduce_mean_axis1(",
+    )
+    counts = tuple(body.count(call) for call in calls)
+    if counts != (1, 1, 1, 1):
+        raise RuntimeError(f"generated CUDA E3 call counts changed: {counts}")
+    positions = tuple(body.index(call) for call in calls)
+    if positions != tuple(sorted(positions)):
+        raise RuntimeError(f"generated CUDA E3 call order changed: {positions}")
+
+
 def _assert_orchestration(result: object, runner: FixedRunner) -> Path:
     if runner.calls != 1:
         raise RuntimeError(f"expected one synthetic probe, got {runner.calls}")
@@ -216,6 +257,7 @@ def _assert_orchestration(result: object, runner: FixedRunner) -> Path:
     for token in required_tokens:
         if token not in rust:
             raise RuntimeError(f"generated Rust omitted {token}")
+    _assert_inference_call_order(rust)
     forbidden = (
         "TFE_TensorHandleResolve",
         "TFE_TensorHandleCopyToDevice",
