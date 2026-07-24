@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import gc
 import hashlib
-import importlib
 import importlib.util
 import inspect
 import json
@@ -352,12 +351,29 @@ def _load_candidate_build_module(tensorflow_root: Path) -> Any:
     return module
 
 
-def _load_verifier_module() -> Any:
-    """Load the local offline verifier for package and direct-script invocation."""
+def _load_verifier_module(tensorflow_root: Path) -> Any:
+    """Load only the verifier owned by the attested TensorFlow checkout."""
+    root = tensorflow_root.resolve()
+    verifier = (root / "scripts" / "verify_cuda_e3_evidence.py").resolve()
+    if not verifier.is_relative_to(root) or not verifier.is_file():
+        raise RuntimeError("attested TensorFlow verifier module is unavailable")
+    spec = importlib.util.spec_from_file_location(
+        "_rextio_tensorflow_cuda_e3_evidence_verifier", verifier
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("attested TensorFlow verifier module is not loadable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     try:
-        return importlib.import_module("scripts.verify_cuda_e3_evidence")
-    except ModuleNotFoundError:
-        return importlib.import_module("verify_cuda_e3_evidence")
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
+    module_file = getattr(module, "__file__", None)
+    if not isinstance(module_file, str) or Path(module_file).resolve() != verifier:
+        sys.modules.pop(spec.name, None)
+        raise RuntimeError("attested TensorFlow verifier module identity changed")
+    return module
 
 
 def generate_candidate(
@@ -518,12 +534,12 @@ def build_payload(*, source: dict[str, Any], environment: dict[str, Any], toolch
 
 def main() -> int:
     """Collect one new self-attested evidence envelope in the closed schema."""
-    verifier = _load_verifier_module()
     args = build_parser().parse_args()
-    validate_requested_paths_and_values(args, verifier.SMS)
-    toolchain = validate_host()
     roots = tuple(path.resolve() for path in (args.tensorflow_root, args.core_root, args.provider_root))
     tensorflow_root, core_root, provider_root = roots
+    verifier = _load_verifier_module(tensorflow_root)
+    validate_requested_paths_and_values(args, verifier.SMS)
+    toolchain = validate_host()
     validate_destinations_are_outside_checkouts(args, roots)
     core = checkout_identity(core_root)
     provider = checkout_identity(provider_root)

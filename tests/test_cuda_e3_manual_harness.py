@@ -236,6 +236,31 @@ def test_candidate_build_module_is_loaded_from_attested_tensorflow_root(
     assert Path(loaded.__file__).resolve() == candidate.resolve()
 
 
+def test_verifier_module_is_loaded_from_attested_tensorflow_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    tensorflow_root = tmp_path / "tensorflow"
+    verifier = tensorflow_root / "scripts" / "verify_cuda_e3_evidence.py"
+    verifier.parent.mkdir(parents=True)
+    verifier.write_text("MARKER = 'attested'\nSMS = {'sm_80'}\n", encoding="utf-8")
+    shadow_scripts = type(sys)("scripts")
+    shadow_scripts.verify_cuda_e3_evidence = type(sys)("scripts.verify_cuda_e3_evidence")
+    shadow_scripts.verify_cuda_e3_evidence.MARKER = "ambient-package"
+    shadow_verifier = type(sys)("verify_cuda_e3_evidence")
+    shadow_verifier.MARKER = "ambient-script"
+    monkeypatch.setitem(sys.modules, "scripts", shadow_scripts)
+    monkeypatch.setitem(
+        sys.modules, "scripts.verify_cuda_e3_evidence", shadow_scripts.verify_cuda_e3_evidence
+    )
+    monkeypatch.setitem(sys.modules, "verify_cuda_e3_evidence", shadow_verifier)
+
+    loaded = module._load_verifier_module(tensorflow_root)
+
+    assert loaded.MARKER == "attested"
+    assert Path(loaded.__file__).resolve() == verifier.resolve()
+
+
 def test_provider_observations_are_validated_and_bound_to_hashes() -> None:
     module = _module()
     profile = {"target_triple": module.TARGET}
