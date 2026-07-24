@@ -58,7 +58,7 @@ def _payload() -> dict[str, object]:
             "distribution": "rextio-tensorflow",
             "version": "0.1.2",
             "plugin_module": "rextio_tensorflow.plugin",
-            "native_module": "cuda_app._rextio_native",
+            "native_module": "_rextio_native",
         },
         "source": {
             "core_commit": "7f47f0ce8cea0b6dbeb7fd3c733f65eeaa6bb5e0",
@@ -190,6 +190,16 @@ def test_tampering_without_rehash_is_rejected() -> None:
     envelope = _envelope()
     envelope["payload"]["environment"]["gpu"]["sm"] = "sm_90"
     with pytest.raises(EvidenceError, match="payload_sha256"):
+        validate_envelope(envelope)
+
+
+def test_native_module_identity_is_exactly_top_level_rextio_native() -> None:
+    assert _payload()["package"]["native_module"] == "_rextio_native"
+    envelope = _mutated(
+        ("payload", "package", "native_module"),
+        "cuda_app._rextio_native",
+    )
+    with pytest.raises(EvidenceError, match="package or module identity"):
         validate_envelope(envelope)
 
 

@@ -260,7 +260,7 @@ def _validate_identity(payload: dict[str, Any]) -> None:
             "distribution": "rextio-tensorflow",
             "version": "0.1.2",
             "plugin_module": "rextio_tensorflow.plugin",
-            "native_module": "cuda_app._rextio_native",
+            "native_module": "_rextio_native",
         },
     ):
         raise EvidenceError("package or module identity does not match the E3 candidate")
