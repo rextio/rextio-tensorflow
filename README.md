@@ -1,14 +1,20 @@
 # rextio-tensorflow
 
-**Unreleased 0.1.2 native-AOT Alpha bounded CPU-surface expansion.** The latest released
-package remains 0.1.0 (released **2026-07-18**).
+**Unreleased 0.1.2 native-AOT Alpha.** The latest released package remains
+0.1.0 (released **2026-07-18**).
 
-This is a Rextio **plugin API 1.3** provider that lowers a **tiny, statically
-proven** subset of Python **TensorFlow 2.21.0 `CPU:0` inference-oriented code** to native Rust
-AOT code. Generated code does **not** reimplement TensorFlow in pure Rust. It
-is an **owned thin safe wrapper** over the **same** already-loaded TensorFlow
-wheel’s public TFE C API plus a **private** EagerTensor bridge
-(`dlopen` / `dlsym` with `RTLD_NOLOAD`).
+This is a Rextio **plugin API 1.6** provider with two deliberately separate
+lanes:
+
+- The existing bounded TensorFlow 2.21.0 **CPU Alpha** surface.
+- A Linux x86_64 GNU **CUDA E3 build-only candidate** for one exact
+  `matmul → bias_add → relu → reduce_mean(axis=1)` slice.
+
+Generated code does **not** reimplement TensorFlow in pure Rust. Both lanes use
+owned thin wrappers over the same already-loaded TensorFlow wheel's public TFE
+C API plus a private EagerTensor bridge (`RTLD_NOLOAD`). The CUDA lane has a
+separate generated module and Rust tensor type; it is not a support,
+certification, release, or performance claim.
 
 | Status field | Value |
 | --- | --- |
@@ -18,12 +24,12 @@ wheel’s public TFE C API plus a **private** EagerTensor bridge
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
+| CUDA candidate | **Build-only**, `support_claim=false`, `certification_ready=false`; no real-GPU evidence |
 
-This hotfix remains a plugin API **1.3** provider and supports Core 0.1.5's
-API 1.4 host-extension path. It rejects boundary-free standalone Rust lowering
-and does not opt into standalone artifact capability. Provider entry methods
-also fail closed unless the host advertises API 1.x minor 3 or newer, protecting
-the API-1.3 field boundary even if package dependencies are bypassed.
+The unreleased branch requires Core `rextio>=0.1.6,<0.2` and plugin API
+**1.6**. It rejects boundary-free standalone Rust lowering. CUDA lowering also
+requires exact authorization from
+`rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64`.
 
 Final release verification completed on 2026-07-18: GitHub Actions
 [run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
@@ -33,7 +39,7 @@ PyPI resolved `tensorflow==2.21.0` and exposed the plugin entry point with API
 
 Unsupported call sites stay on Rextio’s ordinary **Python fallback** at
 analysis time. Sites that *are* claimed and lowered native still **fail closed
-at runtime** on version / symbol / boundary mismatch — core plugin API 1.3 has
+at runtime** on version / symbol / boundary mismatch.
 **no** transparent runtime-availability / module-init retry hook.
 
 ---
@@ -50,15 +56,15 @@ plugin registration, the generated runtime helper
 | Package version | `0.1.2` (unreleased) | `__about__.__version__` |
 | CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
 | Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
-| Rextio package | **`>=0.1.3,<0.2`** | Allowed package range in `pyproject.toml`, not an exact package pin |
-| Plugin API | **1.3** (`REQUIRED_PLUGIN_API = "1.3"`) | `plugin.py`; loader contract tests |
+| Rextio package | **`>=0.1.6,<0.2`** | API 1.6 device metadata and authorization |
+| Plugin API | **1.6** (`REQUIRED_PLUGIN_API = "1.6"`) | `plugin.py`; loader contract tests |
 | TensorFlow (Python) | **`tensorflow==2.21.0`** | `pyproject.toml` dependency; runtime checks `tf.__version__` |
 | TensorFlow (C) | **`TF_Version() == "2.21.0"`** | Runtime `Api::load` |
-| Device | **`CPU:0` only** | Boundary requires a backing-device name ending in `/device:CPU:0`; ops reuse that device |
+| Device | CPU lane: **`CPU:0`**; CUDA candidate: exact enumerated **`GPU:0`** | CUDA uses `TFE_ContextListDevices` and exact full-name equality |
 | Dtype | **float32 operation inputs/intermediates; default-int64 ArgMax output** | Runtime checks float32 rank-1/2 inputs and exact int64 rank-1 classification output/boundaries |
 | Ranks | **float32 rank 1/2; int64 rank 1 only** | Type vocabulary + claim/lower and boundary checks |
-| Execution surface | **Inference-oriented only** | Training and `GradientTape` integration are unsupported. MatMul sets `grad_a` / `grad_b` false, but this is not a general TensorFlow no-grad guarantee. |
-| Generated Rust crate | Edition **2021**, `rust-version = "1.83"`, PyO3 **0.29** | Inherited from Rextio 0.1.3's generated Cargo manifest; the Rust version is an MSRV, not an exact toolchain patch pin |
+| Execution surface | **Inference/no-grad only** | CUDA rejects when a backward tape or forward accumulator may record the supplied inputs, before handle copying or execution |
+| CUDA build toolchain | Rust **1.93.1**, CPython **3.11**, Linux x86_64 GNU | Exact build-only CI contract |
 | Certified Rust toolchain | `rustc 1.93.1`, `cargo 1.93.1` on `aarch64-apple-darwin` | Used for the current real-Cargo Alpha evidence; this repo has no `rust-toolchain.toml` |
 | Rust TF crates | **None** | `crate_dependencies() == ()`; helpers must not use `tensorflow-sys` / high-level `tensorflow` crate |
 
@@ -131,7 +137,7 @@ Windows support is **explicitly deferred**. Unsupported compile targets
 (Windows, musl, other) fail closed at **native build** via `compile_error!`
 because the POSIX `dlfcn` externs are not a truthful runtime contract there.
 Runtime availability failures on supported profiles still never silently retry
-the Python body under plugin API 1.3 (no runtime-availability hook).
+the Python body under plugin API 1.6 (no runtime-availability hook).
 
 ### Why a private ABI exists
 
@@ -162,7 +168,7 @@ not C++ symbols.
 
 ## Supported TensorFlow forms and result ranks
 
-Claim decisions are pure functions of Rextio API 1.3 site metadata (kind,
+Claim decisions are pure functions of Rextio API 1.6 site metadata (kind,
 target, operand types, keyword **literals**). Lowering **revalidates** the
 same constraints and fails with `ValueError` (not `assert`).
 
@@ -480,7 +486,7 @@ invoked with annotation-violating values, for example:
 | `tf.Variable(...)` | `expected a TensorFlow EagerTensor` |
 | NumPy array | `expected a TensorFlow EagerTensor` |
 
-These do **not** transparently fall back to the Python body under API 1.3.
+These do **not** transparently fall back to the Python body under API 1.6.
 
 ---
 
@@ -557,7 +563,7 @@ mypy src
 
 Focused unit tests cover analyzer-resolved import aliases, claim accept/reject,
 positional-literal alignment, lower emission into
-`rextio_tensorflow_runtime`, plugin API 1.3 loader contract, empty crate deps,
+`rextio_tensorflow_runtime`, plugin API 1.6 loader contract, empty crate deps,
 runtime-helper hardening (`RTLD_NOLOAD`, private bridge symbols, no
 `unwrap`/`panic!` in helpers), and **platform ABI profile source contracts**
 (certified macOS arm64, experimental Linux x86_64/aarch64, unsupported/

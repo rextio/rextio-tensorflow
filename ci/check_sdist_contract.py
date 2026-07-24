@@ -9,6 +9,9 @@ from pathlib import Path, PurePosixPath
 REQUIRED_MEMBERS = (
     Path("tests/test_platform_matrix.py"),
     Path("ci/platform-contract.json"),
+    Path("ci/cuda-e3-build-only.json"),
+    Path("ci/build_cuda_candidate.py"),
+    Path("docs/cuda-build-only-0.1.2.md"),
 )
 
 

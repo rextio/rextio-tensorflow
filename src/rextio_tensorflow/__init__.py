@@ -1,6 +1,7 @@
 """rextio-tensorflow 0.1.2: public Alpha plugin for a tiny TensorFlow slice.
 
-Implements Rextio plugin API 1.3 for a float32 CPU inference surface lowered
+Implements Rextio plugin API 1.6 for a float32 CPU inference surface and a
+bounded Linux CUDA build-only candidate lowered
 via an owned thin safe wrapper over the active ``tensorflow==2.21.0`` wheel's
 TFE C API (dlopen/dlsym; no abandoned high-level TensorFlow Rust crate).
 

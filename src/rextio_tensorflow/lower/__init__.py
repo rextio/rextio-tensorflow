@@ -8,6 +8,7 @@ from rextio_tensorflow.lower import (
     activations,
     add,
     classification,
+    cuda,
     matmul,
     reductions,
     unary,
@@ -22,7 +23,7 @@ def lower(claimed: ClaimSite, ctx: LoweringContext) -> LoweredExpr:
     Independently revalidates authoritative claim metadata and fails closed
     with ``ValueError`` (not ``assert``) so guards survive ``python -O``.
     """
-    for lane in (matmul, activations, unary, add, reductions, classification):
+    for lane in (cuda, matmul, activations, unary, add, reductions, classification):
         result = lane.try_lower(claimed, ctx)
         if result is not None:
             return result

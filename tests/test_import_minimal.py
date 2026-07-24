@@ -45,6 +45,8 @@ def test_types_and_root_import_without_tf_or_rextio_config(tmp_path: Path) -> No
         import rextio_tensorflow.types as types
         assert types.TensorF32Cpu2D is not None
         assert types.TensorF32Cpu1D is not None
+        assert types.TensorF32Cuda0_2D is not None
+        assert types.TensorF32Cuda0_1D is not None
 
         from rextio_tensorflow import RextioTensorflowPlugin, __version__, plugin
         assert isinstance(__version__, str) and __version__
@@ -52,7 +54,7 @@ def test_types_and_root_import_without_tf_or_rextio_config(tmp_path: Path) -> No
         provider = plugin()
         assert isinstance(provider, RextioTensorflowPlugin)
         assert provider.plugin_id == "rextio-tensorflow"
-        assert provider.api_version == "1.3"
+        assert provider.api_version == "1.6"
 
         assert "tensorflow" not in sys.modules
         print("ok")
