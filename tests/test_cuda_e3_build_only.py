@@ -340,7 +340,15 @@ def test_generated_inference_call_order_ignores_runtime_helper_definitions() -> 
         "rextio_tensorflow_cuda_runtime::reduce_mean_axis1(",
     )
     helper_noise = "\n".join(f"fn helper() {{ {call}value); }}" for call in calls)
-    body = "\n".join(f"let value = {call}value)?;" for call in calls)
+    body = """
+let mut hidden = rextio_tensorflow_cuda_runtime::matmul(&x, &weight)?;
+let mut biased = rextio_tensorflow_cuda_runtime::bias_add(&hidden, &bias)?;
+let mut activated = rextio_tensorflow_cuda_runtime::relu(&biased)?;
+return Ok(rextio_tensorflow_cuda_runtime::materialize_f32_cuda0_1d(
+    py,
+    rextio_tensorflow_cuda_runtime::reduce_mean_axis1(&activated)?,
+)?);
+"""
     rust = (
         f"{helper_noise}\n"
         "fn cuda_app__kernels__inference() {\n"
@@ -379,6 +387,60 @@ def test_generated_inference_call_order_rejects_missing_duplicate_or_reordered(
 ) -> None:
     rust = f"fn cuda_app__kernels__inference() {{{body}}}"
     with pytest.raises(RuntimeError, match="call (counts|order) changed"):
+        _assert_inference_call_order(rust)
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        """
+    let mut hidden = rextio_tensorflow_cuda_runtime::matmul(&x, &weight)?;
+    let mut biased = rextio_tensorflow_cuda_runtime::bias_add(&x, &bias)?;
+    let mut activated = rextio_tensorflow_cuda_runtime::relu(&biased)?;
+    return Ok(rextio_tensorflow_cuda_runtime::materialize_f32_cuda0_1d(
+        py,
+        rextio_tensorflow_cuda_runtime::reduce_mean_axis1(&activated)?,
+    )?);
+""",
+        """
+    let mut hidden = rextio_tensorflow_cuda_runtime::matmul(&x, &weight)?;
+    let mut biased = rextio_tensorflow_cuda_runtime::bias_add(&hidden, &bias)?;
+    let mut activated = rextio_tensorflow_cuda_runtime::relu(&hidden)?;
+    return Ok(rextio_tensorflow_cuda_runtime::materialize_f32_cuda0_1d(
+        py,
+        rextio_tensorflow_cuda_runtime::reduce_mean_axis1(&activated)?,
+    )?);
+""",
+        """
+    let mut hidden = rextio_tensorflow_cuda_runtime::matmul(&x, &weight)?;
+    let mut biased = rextio_tensorflow_cuda_runtime::bias_add(&hidden, &bias)?;
+    let mut activated = rextio_tensorflow_cuda_runtime::relu(&biased)?;
+    return Ok(rextio_tensorflow_cuda_runtime::materialize_f32_cuda0_1d(
+        py,
+        rextio_tensorflow_cuda_runtime::reduce_mean_axis1(&biased)?,
+    )?);
+""",
+        """
+    let mut hidden = rextio_tensorflow_cuda_runtime::matmul(&x, &weight)?;
+    let mut biased = rextio_tensorflow_cuda_runtime::bias_add(&hidden, &bias)?;
+    let mut activated = rextio_tensorflow_cuda_runtime::relu(&biased)?;
+    let mut reduced =
+        rextio_tensorflow_cuda_runtime::reduce_mean_axis1(&activated)?;
+    return Ok(rextio_tensorflow_cuda_runtime::materialize_f32_cuda0_1d(
+        py, activated,
+    )?);
+""",
+    ),
+)
+def test_generated_inference_call_order_rejects_disconnected_dataflow(
+    body: str,
+) -> None:
+    rust = f"""
+fn cuda_app__kernels__inference() {
+{body}
+}
+"""
+    with pytest.raises(RuntimeError, match="dataflow changed"):
         _assert_inference_call_order(rust)
 
 

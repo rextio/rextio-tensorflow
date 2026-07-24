@@ -157,7 +157,12 @@ def _rust_function_body(source: str, function_name: str) -> str:
 
 
 def _assert_inference_call_order(rust: str) -> None:
-    """Require each frozen E3 call exactly once and in strict body order."""
+    """Require the frozen E3 calls once, in order, and as one connected chain.
+
+    This deliberately validates Core's deterministic generated shape (simple
+    ``let mut`` bindings and a materialized tail expression); it is not a
+    general Rust parser.
+    """
     body = _rust_function_body(rust, "cuda_app__kernels__inference")
     calls = (
         "rextio_tensorflow_cuda_runtime::matmul(",
@@ -171,6 +176,91 @@ def _assert_inference_call_order(rust: str) -> None:
     positions = tuple(body.index(call) for call in calls)
     if positions != tuple(sorted(positions)):
         raise RuntimeError(f"generated CUDA E3 call order changed: {positions}")
+
+    def call_scope(call: str) -> tuple[int, str, int]:
+        start = body.index(call)
+        opening = start + len(call) - 1
+        depth = 0
+        for index in range(opening, len(body)):
+            character = body[index]
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0:
+                    return start, body[opening + 1 : index], index
+        raise RuntimeError(f"generated CUDA E3 call is unterminated: {call}")
+
+    scopes = tuple(call_scope(call) for call in calls)
+    bindings: list[str] = []
+    for call, (start, _arguments, _closing) in zip(calls[:3], scopes[:3], strict=True):
+        statement_start = max(
+            body.rfind(";", 0, start),
+            body.rfind("{", 0, start),
+            body.rfind("}", 0, start),
+        )
+        assignment = re.fullmatch(
+            r"\s*let\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)"
+            r"(?:\s*:[^=;]+)?\s*=\s*",
+            body[statement_start + 1 : start],
+        )
+        if assignment is None:
+            raise RuntimeError(
+                f"generated CUDA E3 dataflow changed: {call} result is not bound"
+            )
+        bindings.append(assignment.group(1))
+
+    for binding, (_start, arguments, _closing), call in zip(
+        bindings,
+        scopes[1:],
+        calls[1:],
+        strict=True,
+    ):
+        if re.search(rf"&\s*{re.escape(binding)}\b", arguments) is None:
+            raise RuntimeError(
+                "generated CUDA E3 dataflow changed: "
+                f"{call} does not consume {binding}"
+            )
+
+    materializer = (
+        "rextio_tensorflow_cuda_runtime::materialize_f32_cuda0_1d("
+    )
+    if body.count(materializer) != 1:
+        raise RuntimeError("generated CUDA E3 output materializer changed")
+    materializer_start, materializer_arguments, materializer_closing = call_scope(
+        materializer
+    )
+    reduction_start, _reduction_arguments, reduction_closing = scopes[-1]
+    statement_start = max(
+        body.rfind(";", 0, reduction_start),
+        body.rfind("{", 0, reduction_start),
+        body.rfind("}", 0, reduction_start),
+    )
+    reduction_assignment = re.fullmatch(
+        r"\s*let\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)"
+        r"(?:\s*:[^=;]+)?\s*=\s*",
+        body[statement_start + 1 : reduction_start],
+    )
+    if reduction_assignment is None:
+        reduction_is_materialized = (
+            materializer_start < reduction_start
+            and reduction_closing < materializer_closing
+        )
+    else:
+        reduction_binding = reduction_assignment.group(1)
+        reduction_is_materialized = (
+            reduction_closing < materializer_start
+            and re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(reduction_binding)}"
+                r"(?![A-Za-z0-9_])",
+                materializer_arguments,
+            )
+            is not None
+        )
+    if not reduction_is_materialized:
+        raise RuntimeError(
+            "generated CUDA E3 dataflow changed: reduction result is not materialized"
+        )
 
 
 def _assert_orchestration(result: object, runner: FixedRunner) -> Path:
