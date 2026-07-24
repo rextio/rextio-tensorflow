@@ -100,7 +100,7 @@ def _payload() -> dict[str, object]:
                 "wheel_path": wheel_path,
                 "sha256": HASH,
                 "size_bytes": 1,
-                "build_id": None,
+                "build_id": "b" * 40,
                 "mapped": True,
             }
             for role, wheel_path in runtime_rows
@@ -284,7 +284,7 @@ def test_recursively_rejects_path_url_and_credential_leaks(leak: str) -> None:
         validate_envelope(envelope)
 
 
-def test_runtime_images_are_exact_and_build_id_is_nullable_bounded() -> None:
+def test_runtime_images_are_exact_and_build_id_is_required_lowercase_bounded() -> None:
     envelope = _mutated(
         ("payload", "runtime_images", 0, "wheel_path"),
         "tensorflow/libtensorflow_cc.so",
@@ -292,6 +292,12 @@ def test_runtime_images_are_exact_and_build_id_is_nullable_bounded() -> None:
     with pytest.raises(EvidenceError, match="wrong wheel-relative"):
         validate_envelope(envelope)
     envelope = _mutated(("payload", "runtime_images", 0, "build_id"), "abc")
+    with pytest.raises(EvidenceError, match="invalid format"):
+        validate_envelope(envelope)
+    envelope = _mutated(("payload", "runtime_images", 0, "build_id"), None)
+    with pytest.raises(EvidenceError, match="non-empty string"):
+        validate_envelope(envelope)
+    envelope = _mutated(("payload", "runtime_images", 0, "build_id"), "B" * 40)
     with pytest.raises(EvidenceError, match="invalid format"):
         validate_envelope(envelope)
     envelope = _mutated(("payload", "runtime_images", 0, "mapped"), False)
