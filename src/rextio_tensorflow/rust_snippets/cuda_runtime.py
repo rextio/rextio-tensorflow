@@ -117,10 +117,12 @@ def _build_cuda_runtime() -> str:
 
                     tfe_new_tensor_handle:""",
         """                    tf_tensor_byte_size: framework.resolve("TF_TensorByteSize")?,
-                    tf_delete_device_list: framework.resolve("TF_DeleteDeviceList")?,
-                    tf_device_list_count: framework.resolve("TF_DeviceListCount")?,
-                    tf_device_list_name: framework.resolve("TF_DeviceListName")?,
-                    tf_device_list_type: framework.resolve("TF_DeviceListType")?,
+                    // The pinned Linux wheel exports the DeviceList family
+                    // from libtensorflow_cc.so.2, not framework.so.
+                    tf_delete_device_list: cc.resolve("TF_DeleteDeviceList")?,
+                    tf_device_list_count: cc.resolve("TF_DeviceListCount")?,
+                    tf_device_list_name: cc.resolve("TF_DeviceListName")?,
+                    tf_device_list_type: cc.resolve("TF_DeviceListType")?,
 
                     tfe_context_list_devices: cc.resolve("TFE_ContextListDevices")?,
                     tfe_new_tensor_handle:""",

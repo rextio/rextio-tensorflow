@@ -318,6 +318,14 @@ def test_cuda_runtime_is_separate_and_contains_exact_safety_anchors() -> None:
         "TFE_Execute",
     ):
         assert symbol in helper
+    for symbol in (
+        "TF_DeleteDeviceList",
+        "TF_DeviceListCount",
+        "TF_DeviceListName",
+        "TF_DeviceListType",
+    ):
+        assert f'cc.resolve("{symbol}")' in helper
+        assert f'framework.resolve("{symbol}")' not in helper
     assert 'device_type == "GPU"' in helper
     assert 'name.ends_with("/device:GPU:0")' in helper
     assert "if actual != expected" in helper
