@@ -1,4 +1,4 @@
-"""Package metadata contracts for the unreleased 0.1.2 Alpha expansion."""
+"""Package metadata contracts for the released 0.1.2 Alpha expansion."""
 
 from __future__ import annotations
 
