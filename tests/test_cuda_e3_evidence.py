@@ -285,21 +285,49 @@ def test_recursively_rejects_path_url_and_credential_leaks(leak: str) -> None:
         validate_envelope(envelope)
 
 
-def test_runtime_images_are_exact_and_build_id_is_required_lowercase_bounded() -> None:
+def test_runtime_image_build_id_is_optional_but_lowercase_bounded_when_present() -> None:
+    envelope = _mutated(("payload", "runtime_images", 0, "build_id"), None)
+    assert validate_envelope(envelope) == envelope["payload"]
+
+    envelope = _mutated(("payload", "runtime_images", 0, "build_id"), "abc")
+    with pytest.raises(EvidenceError, match="invalid format"):
+        validate_envelope(envelope)
+    envelope = _mutated(("payload", "runtime_images", 0, "build_id"), "B" * 40)
+    with pytest.raises(EvidenceError, match="invalid format"):
+        validate_envelope(envelope)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    (
+        ("wheel_path", "tensorflow/libtensorflow_cc.so", "wrong wheel-relative"),
+        ("mapped", False, "mapped=true"),
+        ("role", "wrong_role", "unknown runtime image role"),
+        ("sha256", "A" * 64, "invalid format"),
+        ("size_bytes", 0, "positive integer"),
+    ),
+)
+def test_runtime_image_identity_remains_exact_without_build_id(
+    field: str,
+    value: object,
+    error: str,
+) -> None:
+    envelope = copy.deepcopy(_envelope())
+    image = envelope["payload"]["runtime_images"][0]
+    image["build_id"] = None
+    image[field] = value
+    _rehash(envelope)
+
+    with pytest.raises(EvidenceError, match=error):
+        validate_envelope(envelope)
+
+
+def test_runtime_image_paths_and_mapping_remain_exact_with_build_ids() -> None:
     envelope = _mutated(
         ("payload", "runtime_images", 0, "wheel_path"),
         "tensorflow/libtensorflow_cc.so",
     )
     with pytest.raises(EvidenceError, match="wrong wheel-relative"):
-        validate_envelope(envelope)
-    envelope = _mutated(("payload", "runtime_images", 0, "build_id"), "abc")
-    with pytest.raises(EvidenceError, match="invalid format"):
-        validate_envelope(envelope)
-    envelope = _mutated(("payload", "runtime_images", 0, "build_id"), None)
-    with pytest.raises(EvidenceError, match="non-empty string"):
-        validate_envelope(envelope)
-    envelope = _mutated(("payload", "runtime_images", 0, "build_id"), "B" * 40)
-    with pytest.raises(EvidenceError, match="invalid format"):
         validate_envelope(envelope)
     envelope = _mutated(("payload", "runtime_images", 0, "mapped"), False)
     with pytest.raises(EvidenceError, match="mapped=true"):

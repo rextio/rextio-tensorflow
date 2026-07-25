@@ -398,11 +398,12 @@ def _validate_artifacts(payload: dict[str, Any]) -> None:
             f"payload.runtime_images[{index}].size_bytes",
         )
         build_id = image["build_id"]
-        _string(
-            build_id,
-            f"payload.runtime_images[{index}].build_id",
-            pattern=BUILD_ID,
-        )
+        if build_id is not None:
+            _string(
+                build_id,
+                f"payload.runtime_images[{index}].build_id",
+                pattern=BUILD_ID,
+            )
         if image["mapped"] is not True:
             raise EvidenceError(f"runtime image {role} must be self-attested mapped=true")
     if image_roles != set(RUNTIME_IMAGES):

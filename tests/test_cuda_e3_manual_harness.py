@@ -374,7 +374,7 @@ def test_runtime_dso_capture_requires_expected_mapped_wheel_images(tmp_path: Pat
     identities = module.capture_runtime_images(
         wheel,
         maps,
-        read_build_id=lambda path: f"build-{path.name}",
+        read_build_id=lambda path: None if path == cc else f"build-{path.name}",
     )
     assert {row["role"] for row in identities} == {
         "pywrap_tensorflow_common",
@@ -383,10 +383,9 @@ def test_runtime_dso_capture_requires_expected_mapped_wheel_images(tmp_path: Pat
     }
     assert all(row["mapped"] is True for row in identities)
     assert all(not row["wheel_path"].startswith("/") for row in identities)
+    assert next(row for row in identities if row["role"] == "tensorflow_cc")["build_id"] is None
     with pytest.raises(RuntimeError, match="mapped"):
         module.capture_runtime_images(wheel, maps.replace(str(cc), ""), read_build_id=lambda _: "x")
-    with pytest.raises(RuntimeError, match="build ID"):
-        module.capture_runtime_images(wheel, maps, read_build_id=lambda _: None)
 
 
 def test_runtime_dso_capture_rejects_suffix_and_deleted_map_entries(tmp_path: Path) -> None:
