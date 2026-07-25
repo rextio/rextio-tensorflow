@@ -52,6 +52,23 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/relu-f32-cpu-1d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.relu on float32 CPU rank-1 tensors",
+        ),
+        constraint=(
+            "One positional float32 CPU rank-1 tensor operand and no keywords. "
+            "The owned same-wheel TFE Relu result preserves float32, CPU:0, and rank 1."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-018",
+        guidance="Call tf.nn.relu(x) with a TensorF32Cpu1D positional argument.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/add-call-f32-cpu",
         provider="rextio-tensorflow",
         scope=RuleScope(
@@ -83,8 +100,7 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         scope=RuleScope(
             kind="binop",
             pattern=(
-                "binary + on float32 CPU rank-2 (+ optional rank-1 bias) or "
-                "same-rank tensors"
+                "binary + on float32 CPU rank-2 (+ optional rank-1 bias) or same-rank tensors"
             ),
         ),
         constraint=(
@@ -102,26 +118,232 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=True,
     ),
     RuleRecord(
+        id="rextio-tensorflow/mul-binop-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="binop",
+            pattern=(
+                "binary * on float32 CPU rank-2 (+ optional rank-1 bias) or same-rank tensors"
+            ),
+        ),
+        constraint=(
+            "Binop '*' over two float32 CPU plugin tensors only: rank-2 * rank-2, "
+            "rank-1 * rank-1, or rank-2 * rank-1 trailing broadcast (either order). "
+            "Concrete broadcast dimensions are checked by TFE Mul at runtime. "
+            "Scalar operands are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-012",
+        guidance=(
+            "Write x * y with TensorF32Cpu2D / TensorF32Cpu1D annotations on "
+            "the Alpha-supported broadcast shapes."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/mul-call-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.multiply / tf.math.multiply on float32 CPU rank-1/rank-2 "
+                "same-rank or trailing rank-2/rank-1 broadcast tensors"
+            ),
+        ),
+        constraint=(
+            "Exactly two positional plugin tensor operands and no keywords. "
+            "The accepted rank matrix matches binary '*'; concrete broadcasting "
+            "is checked by the same owned TFE Mul operation."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-013",
+        guidance="Call tf.multiply(x, y) with two supported annotated tensors.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/sub-call-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.subtract / tf.math.subtract on float32 CPU rank-1/rank-2 "
+                "same-rank or trailing rank-2/rank-1 broadcast tensors"
+            ),
+        ),
+        constraint=(
+            "Exactly two positional plugin tensor operands and no keywords. "
+            "Concrete broadcasting and incompatible-shape errors are delegated "
+            "to the owned same-wheel TFE Sub operation."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-014",
+        guidance="Call tf.subtract(x, y) with two supported annotated tensors.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/sub-binop-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="binop",
+            pattern=(
+                "binary - on float32 CPU rank-1/rank-2 same-rank or trailing "
+                "rank-2/rank-1 broadcast tensors"
+            ),
+        ),
+        constraint=(
+            "Exactly two plugin tensor operands in the bounded rank matrix. "
+            "TFE Sub preserves operand order and owns shape-error semantics."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-015",
+        guidance="Write x - y with two supported annotated tensors.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/div-call-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.divide / tf.math.divide on float32 CPU rank-1/rank-2 "
+                "same-rank or trailing rank-2/rank-1 broadcast tensors"
+            ),
+        ),
+        constraint=(
+            "Exactly two positional plugin tensor operands and no keywords. "
+            "The owned same-wheel TFE RealDiv operation supplies TensorFlow's "
+            "floating division, special-value, broadcasting, and error semantics."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-016",
+        guidance="Call tf.divide(x, y) with two supported annotated tensors.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/div-binop-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="binop",
+            pattern=(
+                "binary / on float32 CPU rank-1/rank-2 same-rank or trailing "
+                "rank-2/rank-1 broadcast tensors"
+            ),
+        ),
+        constraint=(
+            "Exactly two plugin tensor operands in the bounded rank matrix. "
+            "TFE RealDiv preserves operand order and TensorFlow float32 semantics."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-017",
+        guidance="Write x / y with two supported annotated tensors.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/maximum-call-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "top-level tf.maximum on two float32 CPU tensors of equal "
+                "rank 1 or equal rank 2"
+            ),
+        ),
+        constraint=(
+            "Exactly two positional non-literal plugin tensor operands and no "
+            "keywords. Both annotations must have the same rank. The owned "
+            "same-wheel TFE Maximum operation supplies TensorFlow's same-rank "
+            "broadcasting, incompatible-shape errors, and special-value "
+            "semantics. Scalars, aliases, and tensorflow.math/raw_ops forms "
+            "are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-032",
+        guidance=(
+            "Call tf.maximum(x, y) with two TensorF32Cpu1D tensors or two "
+            "TensorF32Cpu2D tensors having TensorFlow-compatible shapes."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/minimum-call-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "top-level tf.minimum on two float32 CPU tensors of equal "
+                "rank 1 or equal rank 2"
+            ),
+        ),
+        constraint=(
+            "Exactly two positional non-literal plugin tensor operands and no "
+            "keywords. Both annotations must have the same rank. The owned "
+            "same-wheel TFE Minimum operation supplies TensorFlow's same-rank "
+            "broadcasting, incompatible-shape errors, and special-value "
+            "semantics. Scalars, aliases, and tensorflow.math/raw_ops forms "
+            "are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-033",
+        guidance=(
+            "Call tf.minimum(x, y) with two TensorF32Cpu1D tensors or two "
+            "TensorF32Cpu2D tensors having TensorFlow-compatible shapes."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d",
         provider="rextio-tensorflow",
         scope=RuleScope(
             kind="call",
             pattern=(
                 "tf.reduce_mean(x, axis=1) on float32 CPU rank-2 tensors "
-                "(literal axis keyword)"
+                "(literal keyword or positional axis)"
             ),
         ),
         constraint=(
-            "One float32 CPU rank-2 tensor plus literal keyword axis=1; "
-            "keepdims omitted or False. Positional axis is not claimed in "
-            "Alpha. Result is float32 CPU "
-            "rank-1."
+            "One float32 CPU rank-2 tensor plus literal axis=1, passed either "
+            "positionally with aligned operand literal metadata or by keyword; "
+            "named keepdims is omitted or False. Result is float32 CPU rank-1."
         ),
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-004",
         guidance=(
             "Write tf.reduce_mean(x, axis=1) with a TensorF32Cpu2D operand and "
             "a static axis=1 literal."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/reduce-mean-literal-axis-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.reduce_mean on float32 CPU rank-2 tensors with literal "
+                "axis=0|1 and named literal keepdims=True|False"
+            ),
+        ),
+        constraint=(
+            "Axis is a statically proven int literal 0 or 1, passed by keyword "
+            "or as one aligned positional literal. keepdims is omitted or a "
+            "named bool literal; positional keepdims is excluded. TFE Mean "
+            "receives only the tensor plus an owned int32 axis handle. The "
+            "result is rank-2 when keepdims=True and rank-1 otherwise."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-022",
+        guidance=(
+            "Use tf.reduce_mean(x, axis=0|1, keepdims=True|False), keeping "
+            "keepdims named when present."
         ),
         stability="experimental",
         verified=True,
@@ -139,11 +361,421 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         ),
         outcome="native",
         diagnostic_code="RXTP-TENSORFLOW-005",
+        guidance=("Call tf.nn.sigmoid(x) with a TensorF32Cpu2D positional argument."),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/sigmoid-f32-cpu-1d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.sigmoid on float32 CPU rank-1 tensors",
+        ),
+        constraint=(
+            "One positional float32 CPU rank-1 tensor operand and no keywords. "
+            "The owned same-wheel TFE Sigmoid result preserves float32, CPU:0, and rank 1."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-019",
+        guidance="Call tf.nn.sigmoid(x) with a TensorF32Cpu1D positional argument.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.reduce_sum(x, axis=1) on float32 CPU rank-2 tensors "
+                "(literal keyword or positional axis)"
+            ),
+        ),
+        constraint=(
+            "One float32 CPU rank-2 tensor plus literal axis=1, passed either "
+            "positionally with aligned metadata or by keyword; keepdims is "
+            "omitted or False. The owned TFE Sum wrapper returns a float32 "
+            "CPU rank-1 EagerTensor."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-011",
         guidance=(
-            "Call tf.nn.sigmoid(x) with a TensorF32Cpu2D positional argument."
+            "Write tf.reduce_sum(x, axis=1) with a TensorF32Cpu2D operand and "
+            "a static axis=1 literal."
         ),
         stability="experimental",
         verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.reduce_sum on float32 CPU rank-2 tensors with literal "
+                "axis=0|1 and named literal keepdims=True|False"
+            ),
+        ),
+        constraint=(
+            "Axis is a statically proven int literal 0 or 1, passed by keyword "
+            "or as one aligned positional literal. keepdims is omitted or a "
+            "named bool literal; positional keepdims is excluded. TFE Sum "
+            "receives only the tensor plus an owned int32 axis handle. The "
+            "result is rank-2 when keepdims=True and rank-1 otherwise."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-023",
+        guidance=(
+            "Use tf.reduce_sum(x, axis=0|1, keepdims=True|False), keeping "
+            "keepdims named when present."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/tanh-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.tanh on float32 CPU rank-2 tensors",
+        ),
+        constraint=(
+            "One positional float32 CPU rank-2 tensor operand and no keywords. "
+            "The active TensorFlow 2.21.0 wheel executes the owned TFE Tanh op; "
+            "the result preserves the operand type."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-009",
+        guidance=("Call tf.nn.tanh(x) with a TensorF32Cpu2D positional argument."),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/tanh-f32-cpu-1d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.tanh on float32 CPU rank-1 tensors",
+        ),
+        constraint=(
+            "One positional float32 CPU rank-1 tensor operand and no keywords. "
+            "The owned same-wheel TFE Tanh result preserves float32, CPU:0, and rank 1."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-020",
+        guidance="Call tf.nn.tanh(x) with a TensorF32Cpu1D positional argument.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/abs-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.abs on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Abs result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-026",
+        guidance="Call tf.abs(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/negative-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.negative on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Neg result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-027",
+        guidance="Call tf.negative(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/square-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.square on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Square result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-028",
+        guidance="Call tf.square(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/exp-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.exp on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Exp result preserves rank, "
+            "dtype, and CPU:0 residency."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-029",
+        guidance="Call tf.exp(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/log-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.math.log on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Log result preserves rank, "
+            "dtype, and CPU:0 residency, including TensorFlow domain behavior."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-030",
+        guidance="Call tf.math.log(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/sqrt-f32-cpu",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.math.sqrt on float32 CPU rank-1/rank-2 tensors",
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-1 or rank-2 tensor and no "
+            "keywords. The owned same-wheel TFE Sqrt result preserves rank, "
+            "dtype, CPU:0 residency, domain behavior, and signed zero."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-031",
+        guidance="Call tf.math.sqrt(x) with TensorF32Cpu1D or TensorF32Cpu2D.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/softmax-axis0-f32-cpu-1d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=("tf.nn.softmax(x) or tf.nn.softmax(x, axis=0) on a float32 CPU rank-1 tensor"),
+        ),
+        constraint=(
+            "One float32 CPU rank-1 tensor with axis omitted or explicit literal "
+            "axis=0, passed by keyword or as one aligned positional literal, "
+            "and no other keywords. Raw TFE Softmax operates on the final axis "
+            "and returns float32 CPU rank-1."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-025",
+        guidance=(
+            "Call tf.nn.softmax(x) or tf.nn.softmax(x, axis=0) with a TensorF32Cpu1D operand."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/softmax-axis1-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.softmax(x, axis=1) on a float32 CPU rank-2 tensor",
+        ),
+        constraint=(
+            "One float32 CPU rank-2 tensor plus explicit literal axis=1, passed "
+            "by keyword or as one aligned positional literal, and no other "
+            "keywords. Raw TFE Softmax is final-axis-only and returns float32 "
+            "CPU rank-2. Axis=0 remains fallback because transpose is excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-007",
+        guidance=(
+            "Write tf.nn.softmax(x, axis=1) with a TensorF32Cpu2D operand and "
+            "a static axis=1 literal."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/argmax-axis1-i64-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.argmax(x, axis=1) with default int64 output on float32 CPU rank-2",
+        ),
+        constraint=(
+            "One float32 CPU rank-2 tensor plus literal axis=1, passed by keyword "
+            "or as one aligned positional literal, and no other keywords. The "
+            "owned TFE ArgMax wrapper receives a scalar int32 axis handle and "
+            "materializes exactly an int64 CPU rank-1 EagerTensor."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-008",
+        guidance=(
+            "Write tf.argmax(x, axis=1) with a TensorF32Cpu2D operand and omit "
+            "output_type to retain TensorFlow's default int64 result."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/argmax-axis0-i64-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=("tf.argmax(x, axis=0) with default int64 output on float32 CPU rank-2"),
+        ),
+        constraint=(
+            "One float32 CPU rank-2 tensor plus literal axis=0, passed by keyword "
+            "or as one aligned positional literal, and no other keywords. The "
+            "owned TFE ArgMax wrapper receives scalar int32 axis 0 and returns "
+            "an int64 CPU rank-1 EagerTensor. output_type overrides are excluded."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-024",
+        guidance="Use tf.argmax(x, axis=0) and retain the default int64 output.",
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/bias-add-nhwc-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.nn.bias_add on rank-2 float32 CPU value plus rank-1 bias "
+                "with default/NHWC data format"
+            ),
+        ),
+        constraint=(
+            "Exactly two positional operands in value-then-bias order. value is "
+            "TensorF32Cpu2D, bias is TensorF32Cpu1D, and data_format is omitted "
+            "or the named static literal 'NHWC'. Generated Rust resolves "
+            "TFE_OpSetAttrString from the exact owning TensorFlow 2.21 image, "
+            "sets NHWC explicitly, and delegates last-dimension compatibility "
+            "and error semantics to the owned TFE BiasAdd operation."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-021",
+        guidance=(
+            "Call tf.nn.bias_add(value, bias) with TensorF32Cpu2D value and "
+            "TensorF32Cpu1D bias; omit data_format or use data_format='NHWC'."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda0-matmul-f32-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.matmul on two TensorF32Cuda0_2D values",
+        ),
+        constraint=(
+            "Build-only Linux x86_64 GNU candidate. Both exact EagerTensor "
+            "inputs are already resident on the one enumerated TensorFlow GPU:0, "
+            "float32 rank-2, and no backward tape or forward accumulator may record."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-035",
+        guidance="Use tf.matmul(x, w) with two TensorF32Cuda0_2D operands.",
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda0-bias-add-nhwc-f32-2d-1d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.bias_add on CUDA rank-2 value and rank-1 bias",
+        ),
+        constraint=(
+            "Build-only candidate with value then bias, both already on exact "
+            "TensorFlow GPU:0, and omitted or literal NHWC data_format."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-036",
+        guidance="Use tf.nn.bias_add(value, bias) with default or literal NHWC.",
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda0-relu-f32-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.nn.relu on TensorF32Cuda0_2D",
+        ),
+        constraint=(
+            "One positional float32 rank-2 exact EagerTensor already resident "
+            "on the enumerated TensorFlow GPU:0; no keywords."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-037",
+        guidance="Use tf.nn.relu(x) with TensorF32Cuda0_2D.",
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda0-reduce-mean-axis1-f32-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern="tf.reduce_mean on TensorF32Cuda0_2D with axis=1",
+        ),
+        constraint=(
+            "Literal named axis=1 and omitted or False keepdims. The user tensor "
+            "stays on exact GPU:0; one int32 CPU reduction-axis handle is the "
+            "only bounded host control input."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-038",
+        guidance="Use tf.reduce_mean(x, axis=1) and omit keepdims or pass False.",
+        stability="experimental",
+        verified=False,
+    ),
+    RuleRecord(
+        id="rextio-tensorflow/cuda-e3-outside-bounded-slice",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="type",
+            pattern="CUDA TensorFlow operation outside the four-rule E3 slice",
+        ),
+        constraint=(
+            "Any covered call or binary operation carrying a CUDA marker is "
+            "routed through the CUDA lane before CPU rules and fails closed."
+        ),
+        outcome="fallback",
+        diagnostic_code="RXTP-TENSORFLOW-034",
+        guidance=(
+            "Keep CUDA code to matmul, NHWC bias_add, rank-2 relu, and "
+            "reduce_mean(axis=1), or retain Python fallback."
+        ),
+        stability="experimental",
+        verified=False,
     ),
     RuleRecord(
         id="rextio-tensorflow/unsupported-tensor-surface",
@@ -164,9 +796,11 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         outcome="fallback",
         diagnostic_code="RXTP-TENSORFLOW-010",
         guidance=(
-            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, relu, add, "
-            "reduce_mean(axis=1), and sigmoid; other dtypes, devices, ranks, "
-            "and dynamic literals remain on the fallback."
+            "Keep the Alpha slice on float32 CPU rank-1/2 matmul, activations, "
+            "exact math unary operations, add/multiply/subtract/divide, reductions, "
+            "rank-1 softmax(axis=0/default), rank-2 softmax(axis=1), and "
+            "default-int64 argmax; other dtypes, devices, ranks, aliases, and "
+            "dynamic literals remain on the fallback."
         ),
         stability="experimental",
         verified=False,

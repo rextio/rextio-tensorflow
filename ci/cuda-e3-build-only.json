@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "candidate": "tensorflow-cuda-e3",
+  "support_claim": false,
+  "certification_ready": false,
+  "real_gpu_evidence": false,
+  "plugin_api": "1.6",
+  "core_commit": "7f47f0ce8cea0b6dbeb7fd3c733f65eeaa6bb5e0",
+  "provider_commit": "cf65733f06b91a801f9806367f09948ee7162540",
+  "provider_id": "rextio-device-cuda",
+  "capability_id": "cuda-tensorflow-tfe-linux-x86_64",
+  "target": "x86_64-unknown-linux-gnu",
+  "python": "3.11",
+  "rust": "1.93.1",
+  "tensorflow": "2.21.0",
+  "device": "cuda:0",
+  "dtype": "float32",
+  "ranks": [1, 2],
+  "input_residency": "device",
+  "operations": [
+    "tf.matmul",
+    "tf.nn.bias_add",
+    "tf.nn.relu",
+    "tf.reduce_mean-axis1"
+  ],
+  "hosted_ci": {
+    "synthetic_probe": true,
+    "generate": true,
+    "compile_link_cdylib": true,
+    "import_tensorflow": false,
+    "load_extension": false,
+    "execute_extension": false,
+    "execute_cuda": false
+  },
+  "resource_contracts": [
+    "framework.tensor:framework:borrow-validate",
+    "framework.eager-context:framework:borrow-validate"
+  ]
+}

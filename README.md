@@ -1,22 +1,47 @@
 # rextio-tensorflow
 
-**Public native-AOT Alpha 0.1.0** (release dated **2026-07-18**).
+**Released 0.1.2 native-AOT Alpha** on **2026-07-26**. The prior release was
+0.1.0 (2026-07-18).
 
-This is a Rextio **plugin API 1.3** provider that lowers a **tiny, statically
-proven** subset of Python **TensorFlow 2.21.0 `CPU:0` inference-oriented code** to native Rust
-AOT code. Generated code does **not** reimplement TensorFlow in pure Rust. It
-is an **owned thin safe wrapper** over the **same** already-loaded TensorFlow
-wheel’s public TFE C API plus a **private** EagerTensor bridge
-(`dlopen` / `dlsym` with `RTLD_NOLOAD`).
+This is a Rextio **plugin API 1.6** provider with two deliberately separate
+lanes:
+
+- The existing bounded TensorFlow 2.21.0 **CPU Alpha** surface.
+- A Linux x86_64 GNU **CUDA E3 build-only candidate** for one exact
+  `matmul → bias_add → relu → reduce_mean(axis=1)` slice.
+
+Generated code does **not** reimplement TensorFlow in pure Rust. Both lanes use
+owned thin wrappers over the same already-loaded TensorFlow wheel's public TFE
+C API plus a private EagerTensor bridge (`RTLD_NOLOAD`). The CUDA lane has a
+separate generated module and Rust tensor type. Its inclusion in the package
+does not make it a CUDA support, certification, or performance claim.
 
 | Status field | Value |
 | --- | --- |
-| Version | `0.1.0` (`src/rextio_tensorflow/__about__.py`) |
+| Version | `0.1.2` (`src/rextio_tensorflow/__about__.py`) |
 | Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
-| Release state | **Tagged and live on PyPI** — [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) |
+| Release state | **Released 2026-07-26** as [`rextio-tensorflow==0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
+| CUDA candidate | Build-only hosted CI plus opt-in first-stage real-NVIDIA evidence; `support_claim=false`, `certification_ready=false` |
+
+The 0.1.2 release requires Core `rextio>=0.1.6,<0.2` and plugin API **1.6**.
+It rejects boundary-free standalone Rust lowering. CUDA lowering also
+requires exact authorization from
+`rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64`.
+
+The hosted CUDA job is compile/link-only: it never installs/imports TensorFlow,
+loads the extension, or executes CUDA. A separately opt-in real-NVIDIA
+first-stage harness may produce self-attested execution/parity/lifetime
+evidence; its closed schema requires `kernel_activity_verified=false` and
+`runtime_transfer_profiled=false`, and preserves `support_claim=false` and
+`certification_ready=false`. The offline verifier establishes schema and
+payload integrity only, not GPU execution, hardware certification, or CUDA
+support. See
+[the CUDA build-only and manual-evidence contract](docs/cuda-build-only-0.1.2.md)
+for the exact Linux GNU/CPython 3.11/TF 2.21.0/Rust 1.93.1 pins, clean
+candidate checkout, GPU:0/permitted-SM boundary, and commands.
 
 Final release verification completed on 2026-07-18: GitHub Actions
 [run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
@@ -26,7 +51,7 @@ PyPI resolved `tensorflow==2.21.0` and exposed the plugin entry point with API
 
 Unsupported call sites stay on Rextio’s ordinary **Python fallback** at
 analysis time. Sites that *are* claimed and lowered native still **fail closed
-at runtime** on version / symbol / boundary mismatch — core plugin API 1.3 has
+at runtime** on version / symbol / boundary mismatch.
 **no** transparent runtime-availability / module-init retry hook.
 
 ---
@@ -40,18 +65,18 @@ plugin registration, the generated runtime helper
 
 | Component | Contract | Enforcement / evidence |
 | --- | --- | --- |
-| Package version | `0.1.0` | `__about__.__version__` |
+| Package version | `0.1.2` | `__about__.__version__` |
 | CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
 | Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
-| Rextio package | **`>=0.1.3,<0.2`** | Allowed package range in `pyproject.toml`, not an exact package pin |
-| Plugin API | **1.3** (`REQUIRED_PLUGIN_API = "1.3"`) | `plugin.py`; loader contract tests |
+| Rextio package | **`>=0.1.6,<0.2`** | API 1.6 device metadata and authorization |
+| Plugin API | **1.6** (`REQUIRED_PLUGIN_API = "1.6"`) | `plugin.py`; loader contract tests |
 | TensorFlow (Python) | **`tensorflow==2.21.0`** | `pyproject.toml` dependency; runtime checks `tf.__version__` |
 | TensorFlow (C) | **`TF_Version() == "2.21.0"`** | Runtime `Api::load` |
-| Device | **`CPU:0` only** | Boundary requires a backing-device name ending in `/device:CPU:0`; ops reuse that device |
-| Dtype | **float32 only** | Plugin types `tensor-f32-cpu-{1,2}d`; runtime dtype checks |
-| Ranks | **1 and 2 only** | Type vocabulary + claim/lower rules |
-| Execution surface | **Inference-oriented only** | Training and `GradientTape` integration are unsupported. MatMul sets `grad_a` / `grad_b` false, but this is not a general TensorFlow no-grad guarantee. |
-| Generated Rust crate | Edition **2021**, `rust-version = "1.83"`, PyO3 **0.29** | Inherited from Rextio 0.1.3's generated Cargo manifest; the Rust version is an MSRV, not an exact toolchain patch pin |
+| Device | CPU lane: **`CPU:0`**; CUDA candidate: exact enumerated **`GPU:0`** | CUDA uses `TFE_ContextListDevices` and exact full-name equality |
+| Dtype | **float32 operation inputs/intermediates; default-int64 ArgMax output** | Runtime checks float32 rank-1/2 inputs and exact int64 rank-1 classification output/boundaries |
+| Ranks | **float32 rank 1/2; int64 rank 1 only** | Type vocabulary + claim/lower and boundary checks |
+| Execution surface | **Inference/no-grad only** | CUDA rejects when a backward tape or forward accumulator may record the supplied inputs, before handle copying or execution |
+| CUDA build toolchain | Rust **1.93.1**, CPython **3.11**, Linux x86_64 GNU | Exact build-only CI contract |
 | Certified Rust toolchain | `rustc 1.93.1`, `cargo 1.93.1` on `aarch64-apple-darwin` | Used for the current real-Cargo Alpha evidence; this repo has no `rust-toolchain.toml` |
 | Rust TF crates | **None** | `crate_dependencies() == ()`; helpers must not use `tensorflow-sys` / high-level `tensorflow` crate |
 
@@ -124,7 +149,7 @@ Windows support is **explicitly deferred**. Unsupported compile targets
 (Windows, musl, other) fail closed at **native build** via `compile_error!`
 because the POSIX `dlfcn` externs are not a truthful runtime contract there.
 Runtime availability failures on supported profiles still never silently retry
-the Python body under plugin API 1.3 (no runtime-availability hook).
+the Python body under plugin API 1.6 (no runtime-availability hook).
 
 ### Why a private ABI exists
 
@@ -155,20 +180,30 @@ not C++ symbols.
 
 ## Supported TensorFlow forms and result ranks
 
-Claim decisions are pure functions of Rextio API 1.3 site metadata (kind,
+Claim decisions are pure functions of Rextio API 1.6 site metadata (kind,
 target, operand types, keyword **literals**). Lowering **revalidates** the
 same constraints and fails with `ValueError` (not `assert`).
 
 | Python form | Accepted targets | Operand ranks | Keywords | Result rank | Rule id | Diagnostic |
 | --- | --- | --- | --- | --- | --- | --- |
 | MatMul | `tf.matmul` / `tf.linalg.matmul` (also `tensorflow.*`) | **2 × 2** only | **None** (no `transpose_*`) | **2** | `rextio-tensorflow/matmul-f32-cpu-2d` | `RXTP-TENSORFLOW-001` |
-| ReLU | `tf.nn.relu` | **2** | **None** | **2** | `rextio-tensorflow/relu-f32-cpu-2d` | `RXTP-TENSORFLOW-002` |
-| Sigmoid | `tf.nn.sigmoid` | **2** | **None** | **2** | `rextio-tensorflow/sigmoid-f32-cpu-2d` | `RXTP-TENSORFLOW-005` |
+| ReLU | `tf.nn.relu` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/relu-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-018` / `002` |
+| Sigmoid | `tf.nn.sigmoid` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/sigmoid-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-019` / `005` |
+| Tanh | `tf.nn.tanh` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/tanh-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-020` / `009` |
+| Math unary | `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`, `tf.math.log`, `tf.math.sqrt` | **1 or 2** | exactly one positional operand; no keywords | preserves rank | `rextio-tensorflow/{abs,negative,square,exp,log,sqrt}-f32-cpu` | `RXTP-TENSORFLOW-026`–`031` |
 | Add (call) | `tf.add` / `tf.math.add` | See add pairs below | **None** | max rank | `rextio-tensorflow/add-call-f32-cpu` | `RXTP-TENSORFLOW-003` |
 | Add (binop) | binary `+` | See add pairs below | n/a | max rank | `rextio-tensorflow/add-binop-f32-cpu` | `RXTP-TENSORFLOW-006` |
-| Reduce mean | `tf.reduce_mean` / `tf.math.reduce_mean` | **2** | **`axis=1` literal** only; optional `keepdims=False` or omitted | **1** | `rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d` | `RXTP-TENSORFLOW-004` |
+| Multiply | `tf.multiply` / `tf.math.multiply` or binary `*` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/mul-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-013` / `012` |
+| Subtract | `tf.subtract` / `tf.math.subtract` or binary `-` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/sub-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-014` / `015` |
+| Divide | `tf.divide` / `tf.math.divide` or binary `/` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/div-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-016` / `017` |
+| Maximum / minimum | top-level `tf.maximum` / `tf.minimum` | **1 × 1 or 2 × 2**, equal ranks with TensorFlow-compatible same-rank broadcasting | exactly two positional non-literal tensors; no keywords | preserves rank | `rextio-tensorflow/{maximum,minimum}-call-f32-cpu` | `RXTP-TENSORFLOW-032` / `033` |
+| Reduce mean | `tf.reduce_mean` / `tf.math.reduce_mean` | **2** | literal `axis=0\|1`, keyword or positional; named literal `keepdims=True\|False` or omitted | **1 or 2** | legacy axis-1 rule or `rextio-tensorflow/reduce-mean-literal-axis-f32-cpu-2d` | `RXTP-TENSORFLOW-004` / `022` |
+| Reduce sum | `tf.reduce_sum` / `tf.math.reduce_sum` | **2** | literal `axis=0\|1`, keyword or positional; named literal `keepdims=True\|False` or omitted | **1 or 2** | legacy axis-1 rule or `rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d` | `RXTP-TENSORFLOW-011` / `023` |
+| Softmax | `tf.nn.softmax` | **1 or 2** | rank 1: omitted or literal `axis=0`; rank 2: explicit literal `axis=1`; literal axes may be keyword or positional | preserves float32 rank | `rextio-tensorflow/softmax-axis{0-f32-cpu-1d,1-f32-cpu-2d}` | `RXTP-TENSORFLOW-025` / `007` |
+| ArgMax | `tf.argmax` | **2** float32 | explicit literal `axis=0\|1`, keyword or positional; default output type only | **1** int64 | `rextio-tensorflow/argmax-axis{0,1}-i64-cpu-2d` | `RXTP-TENSORFLOW-024` / `008` |
+| Bias add | `tf.nn.bias_add` | rank-2 value + rank-1 bias | data format omitted or named literal `NHWC`; tensor operands positional | **2** float32 | `rextio-tensorflow/bias-add-nhwc-f32-cpu-2d` | `RXTP-TENSORFLOW-021` |
 
-### Add operand pairs (call and binop)
+### Elementwise operand pairs (add, multiply, subtract, and divide)
 
 | Left | Right | Result |
 | --- | --- | --- |
@@ -179,6 +214,9 @@ same constraints and fails with `ValueError` (not `assert`).
 
 Claims prove **ranks only**. Concrete matrix / broadcast dimension
 compatibility is checked by TFE (`MatMul`, `AddV2`, …) at runtime.
+Maximum/minimum are narrower than the general binary matrix because mixed
+ranks are excluded. Within equal ranks, the owned TFE operation preserves
+TensorFlow's normal broadcasting and incompatible-shape behavior.
 
 ### Coverage declaration (analyzer routing)
 
@@ -187,8 +225,15 @@ Declared packages/modules/symbols (`rules/coverage.py`):
 - packages: `tensorflow`
 - modules: `tensorflow`, `tensorflow.linalg`, `tensorflow.nn`, `tensorflow.math`
 - symbols: `tensorflow.matmul`, `tensorflow.linalg.matmul`, `tensorflow.nn.relu`,
-  `tensorflow.nn.sigmoid`, `tensorflow.add`, `tensorflow.math.add`,
-  `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`
+  `tensorflow.nn.sigmoid`, `tensorflow.nn.tanh`, `tensorflow.abs`,
+  `tensorflow.negative`, `tensorflow.square`, `tensorflow.exp`,
+  `tensorflow.math.log`, `tensorflow.math.sqrt`, `tensorflow.add`,
+  `tensorflow.math.add`, `tensorflow.multiply`, `tensorflow.math.multiply`,
+  `tensorflow.subtract`, `tensorflow.math.subtract`, `tensorflow.divide`,
+  `tensorflow.math.divide`, `tensorflow.maximum`, `tensorflow.minimum`,
+  `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`, `tensorflow.reduce_sum`,
+  `tensorflow.math.reduce_sum`, `tensorflow.nn.softmax`,
+  `tensorflow.argmax`, `tensorflow.nn.bias_add`
 
 ### Boundary annotation types
 
@@ -198,12 +243,18 @@ Import-free markers (`rextio_tensorflow.types` — never import TensorFlow):
 | --- | --- | --- |
 | `TensorF32Cpu2D` | `rextio-tensorflow/tensor-f32-cpu-2d` | `rextio_tensorflow_runtime::RxtTfTensor` |
 | `TensorF32Cpu1D` | `rextio-tensorflow/tensor-f32-cpu-1d` | `rextio_tensorflow_runtime::RxtTfTensor` |
+| `TensorI64Cpu1D` | `rextio-tensorflow/tensor-i64-cpu-1d` | `rextio_tensorflow_runtime::RxtTfTensor` |
 
 Runtime values remain ordinary `tf.Tensor` / EagerTensor objects. Intermediates
 between helpers stay `TFE_TensorHandle`-native (`RxtTfTensor` RAII). Python
 `for` / `if` that Rextio core can prove from scalar values remain ordinary core
 Rust control flow. Tensor-data-dependent branches are not part of this plugin
 surface.
+
+`TensorI64Cpu1D` is the default `tf.argmax` result type and is also a real
+input boundary type: native functions annotated with it accept only exact
+CPU int64 rank-1 EagerTensors. They reject float inputs, other ranks,
+`tf.Variable`, alternate runtimes, and non-CPU devices before executing.
 
 ### Canonical lowered helpers
 
@@ -215,9 +266,19 @@ Lowering emits calls into the exact generated module
 | matmul | `rextio_tensorflow_runtime::matmul(&a, &b)?` |
 | relu | `rextio_tensorflow_runtime::relu(&x)?` |
 | sigmoid | `rextio_tensorflow_runtime::sigmoid(&x)?` |
+| tanh | `rextio_tensorflow_runtime::tanh(&x)?` |
+| abs / negative / square / exp / log / sqrt | `rextio_tensorflow_runtime::{abs,negative,square,exp,log,sqrt}(&x)?` |
 | add / `+` | `rextio_tensorflow_runtime::add(&a, &b)?` |
-| reduce_mean axis=1 | `rextio_tensorflow_runtime::reduce_mean_axis1(&x)?` |
-| boundary extract | `extract_f32_cpu_{1,2}d` |
+| bias add (NHWC) | `rextio_tensorflow_runtime::bias_add(&value, &bias)?` |
+| multiply / `*` | `rextio_tensorflow_runtime::mul(&a, &b)?` |
+| subtract / `-` | `rextio_tensorflow_runtime::sub(&a, &b)?` |
+| divide / `/` | `rextio_tensorflow_runtime::div(&a, &b)?` |
+| maximum / minimum | `rextio_tensorflow_runtime::{maximum,minimum}(&a, &b)?` |
+| reduce_mean axis=0/1 | `reduce_mean_axis{0,1}[_keepdims](&x)?` |
+| reduce_sum axis=0/1 | `reduce_sum_axis{0,1}[_keepdims](&x)?` |
+| softmax final axis | rank 1: `softmax_axis0(&x)?`; rank 2: `softmax_axis1(&x)?` |
+| argmax axis=0/1 (int64) | `rextio_tensorflow_runtime::argmax_axis{0,1}(&x)?` |
+| boundary extract | `extract_f32_cpu_{1,2}d` / `extract_i64_cpu_1d` |
 | boundary materialize | `materialize_tensor` (via `EagerTensorFromHandle`, ownership transfer) |
 
 ---
@@ -226,26 +287,46 @@ Lowering emits calls into the exact generated module
 
 All of the following are required for a site to be **Claimed** and lowered:
 
-1. **Annotations** — operands are the plugin float32 CPU types above (not bare
-   `tf.Tensor`, not unannotated/`None` types).
+1. **Annotations** — claimed TensorFlow operation operands use the plugin
+   float32 CPU types above (not bare `tf.Tensor` or unannotated/`None` types).
+   `TensorI64Cpu1D` is limited to the classification result and exact rank-1
+   function input boundary; it is not accepted as a TensorFlow operation input.
 2. **Functional style only** — covered calls with a **receiver** are
-   `NotCovered` (no method-style receivers on matmul / relu / sigmoid / add /
-   reduce_mean). Lowering also rejects claimed/rendered receivers with
-   `ValueError`.
-3. **Positional operands only** for matmul / relu / sigmoid / add (keywords →
-   `Rejected`).
+   `NotCovered` (no method-style receivers on matmul / unary operations / add /
+   reduce_mean / reduce_sum). Lowering also rejects claimed/rendered receivers
+   with `ValueError`.
+3. **Positional operands only** for matmul / activations / math unary / add
+   (keywords → `Rejected`).
 4. **Matmul** — exactly two rank-2 tensors; no transpose keywords.
-5. **Activations** — exactly one rank-2 tensor; no keywords.
-6. **Add** — exactly two tensors in a supported rank pair (table above).
-7. **reduce_mean** — exactly one rank-2 tensor **plus** static literal keyword
-   `axis=1`. Positional axis is **not** claimed on Alpha. Optional
-   `keepdims=False` only (or omit). Non-literal keywords → `Rejected`.
-8. **No dynamic axis/dtype/rank proof** — only the fixed Alpha vocabulary.
-9. **Inference-oriented slice** — not training/`GradientTape`, graph/Session,
+5. **Unary operations** — activations and the exact listed math-unary targets
+   accept exactly one rank-1 or rank-2 tensor and no keywords. Alternate
+   TensorFlow spellings such as `tf.math.abs` are not inferred aliases.
+6. **Elementwise binary ops** — exactly two tensors in a supported rank pair
+   (table above). Calls accept only the explicitly listed canonical targets
+   and two positional operands; scalars and inferred aliases are excluded.
+7. **reduce_mean / reduce_sum** — one rank-2 tensor plus static literal integer
+   axis 0 or 1, either by keyword or as the second positional operand with
+   exactly aligned `operand_literals`. `axis` metadata must have type `int`.
+   `keepdims` is omitted or a **named** literal bool with type `bool`;
+   positional keepdims, duplication, dynamic values, and extra keywords are
+   rejected. The positional axis is validated at lower time but never emitted
+   as a TFE input.
+8. **Classification** — Softmax accepts rank-1 with its final axis omitted or
+   literal axis 0, and rank-2 with explicit final axis 1. Raw TFE Softmax is
+   last-axis-only and transpose is excluded. ArgMax accepts explicit literal
+   axis 0 or 1 and retains default int64 output. Neither accepts `keepdims`;
+   extra/output-type keywords are rejected.
+9. **BiasAdd** — value is rank-2 float32 CPU, bias is rank-1 float32 CPU, both
+   are positional and ordered value-then-bias. `data_format` is omitted or
+   named literal `NHWC`; NCHW, dynamic/positional format, `name`, keyword
+   tensor operands, and other rank orders are rejected.
+10. **No dynamic axis/dtype/rank proof** — only the fixed Alpha vocabulary.
+11. **Inference-oriented slice** — not training/`GradientTape`, graph/Session,
    `tf.function`/AutoGraph, or non-`CPU:0` execution.
 
 Static claims do **not** prove concrete shapes (e.g. matmul inner dimensions).
-Those fail later inside TFE if incompatible.
+Concrete incompatibilities fail later inside the owned TFE operation, including
+Maximum/Minimum shapes that cannot broadcast.
 
 ---
 
@@ -256,7 +337,7 @@ Anything outside the tables above is either:
 | Outcome | Meaning | Typical cases |
 | --- | --- | --- |
 | **`NotCovered`** | Plugin declines; site may stay on ordinary Python fallback | Unknown symbols (`tf.cos`, …); method receivers on covered targets; untyped (`None`) operands |
-| **`Rejected`** | Recognized shape but not lowerable; diagnostic + Python fallback | Wrong ranks; keywords on matmul/relu/add; `reduce_mean` without `axis=1` literal; bad keepdims; non-plugin tensor types on covered ops (`RXTP-TENSORFLOW-010` / per-op codes) |
+| **`Rejected`** | Recognized shape but not lowerable; diagnostic + Python fallback | Wrong ranks; keywords on unary/binary calls; missing/dynamic/forged metadata; positional keepdims; non-plugin tensor types; unsupported BiasAdd format/forms |
 
 ### Explicit exclusions (not Alpha-supported)
 
@@ -265,11 +346,16 @@ Anything outside the tables above is either:
 - `tf.Variable` or any non-exact EagerTensor at the Python boundary (E2E rejects it)
 - Graph / Session, `tf.function`, AutoGraph, Keras, or SavedModel
 - Tensor-data-dependent Python `if` / `for`, `tf.cond`, or `tf.while_loop`
-- Non-float32 dtypes; rank ≠ {1, 2}
-- Rank-1 activations or matmul; rank-3+ / batched matmul
-- Dynamic reduction axes; positional `axis`; `keepdims=True`
+- Non-float32 operation inputs; int64 is supported only for the exact rank-1
+  ArgMax classification result and its annotated Python boundary
+- Rank-1 matmul; rank-3+ / batched matmul
+- Dynamic or non-0/1 reduction/classification axes; positional `keepdims`;
+  rank-1 Softmax axis 1, rank-2 Softmax axis 0/default;
+  `tf.argmax(output_type=...)`
 - Matmul transpose / other keywords
-- In-place ops
+- In-place ops; scalar operands; inferred aliases such as `tf.math.truediv`;
+  `tf.math.maximum` / `tf.math.minimum`, raw-op forms, and mixed-rank
+  broadcasting for `tf.maximum` / `tf.minimum`
 - Host resolve (`TFE_TensorHandleResolve`) on the inference path
 - DLPack
 - `TFE_NewContext` / second eager context / Session
@@ -343,27 +429,38 @@ Runtime error string prefixes used in contracts include (see
 ### Accepted (claim → native lower)
 
 ```python
-from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D
+from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D, TensorI64Cpu1D
 import tensorflow as tf
 
 def inference(
     x: TensorF32Cpu2D,
     weight: TensorF32Cpu2D,
     bias: TensorF32Cpu1D,
-) -> TensorF32Cpu1D:
+) -> TensorI64Cpu1D:
     h = tf.matmul(x, weight)           # rank-2 → rank-2
     h = tf.nn.relu(h)                  # rank-2 → rank-2
     h = tf.nn.sigmoid(h)               # optional; rank-2 → rank-2
     h = h + bias                       # or tf.add(h, bias); rank-2
-    return tf.reduce_mean(h, axis=1)   # literal axis=1 → rank-1
+    probabilities = tf.nn.softmax(h, axis=1)  # literal axis=1 → rank-2
+    return tf.argmax(probabilities, axis=1)   # default int64 → rank-1
 ```
 
 Also accepted (when types match the tables):
 
 - `tf.linalg.matmul(a, b)` (alias of matmul rule)
-- `tf.math.add(x, y)` / `tf.math.reduce_mean(x, axis=1)`
-- same-rank `+` / `tf.add` for 1D+1D or 2D+2D
-- `tf.reduce_mean(x, axis=1, keepdims=False)`
+- Explicit `tf.math.{add,multiply,subtract,divide}` aliases and `+ * - /`
+  across the bounded rank matrix
+- top-level `tf.maximum` / `tf.minimum` for two same-rank rank-1 or rank-2
+  tensors with TensorFlow-compatible broadcast shapes
+- rank-1 `tf.nn.relu` / `sigmoid` / `tanh`
+- rank-1/rank-2 `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`,
+  `tf.math.log`, and `tf.math.sqrt`
+- rank-1 `tf.nn.softmax(x)` and `tf.nn.softmax(x, axis=0)`
+- `tf.nn.bias_add(matrix, bias)` and the explicit
+  `data_format="NHWC"` form
+- `tf.reduce_mean(x, 0, keepdims=True)` and
+  `tf.reduce_sum(x, axis=1, keepdims=False)`
+- `tf.argmax(x, 0)`; rank-2 Softmax remains explicit axis 1 only
 
 Core-lowerable scalar Python control flow around claimed ops is supported. The
 real-Cargo E2E uses `range(depth)` and an integer condition to choose relu or
@@ -375,10 +472,16 @@ sigmoid; tensor-dependent control flow remains unsupported.
 | --- | --- |
 | `tf.matmul(rank1, rank2)` | `Rejected` (wrong ranks) |
 | `tf.matmul(a, b, transpose_b=True)` | `Rejected` (keywords) |
-| `tf.nn.relu(rank1)` | `Rejected` (Alpha relu is rank-2 only) |
-| `tf.reduce_mean(x)` without `axis=1` | `Rejected` |
-| `tf.reduce_mean(x, 1)` positional axis | `Rejected` (not statically proven on Alpha) |
-| `tf.reduce_mean(x, axis=0)` | `Rejected` |
+| `tf.reduce_mean(x)` without an explicit axis | `Rejected` |
+| `tf.reduce_mean(x, 0, True)` positional keepdims | `Rejected` |
+| dynamic/non-aligned/forged axis metadata | `Rejected` |
+| `tf.reduce_sum(x, axis=2)` or duplicate axis | `Rejected` |
+| rank-2 `tf.nn.softmax(x)` / `tf.nn.softmax(x, axis=0)` | `Rejected` |
+| rank-1 `tf.nn.softmax(x, axis=1)` | `Rejected` |
+| `tf.argmax(x, axis=1, output_type=tf.int32)` | `Rejected` |
+| `tf.nn.bias_add(x, bias, data_format="NCHW")` | `Rejected` |
+| `tf.maximum(rank2, rank1)` / `tf.minimum(rank1, rank2)` | `Rejected` (mixed ranks / broadcasting excluded) |
+| `tf.math.maximum(x, y)` / raw-op forms | `NotCovered` (only exact top-level targets are declared) |
 | `tf.cos(x)` | `NotCovered` |
 | Method-style receiver on a covered call | `NotCovered` |
 | Operand types outside plugin vocabulary on a covered symbol | `Rejected` (`RXTP-TENSORFLOW-010` / op diagnostic) |
@@ -395,30 +498,31 @@ invoked with annotation-violating values, for example:
 | `tf.Variable(...)` | `expected a TensorFlow EagerTensor` |
 | NumPy array | `expected a TensorFlow EagerTensor` |
 
-These do **not** transparently fall back to the Python body under API 1.3.
+These do **not** transparently fall back to the Python body under API 1.6.
 
 ---
 
 ## Alpha surface (reference sketch)
 
 ```python
-from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D
+from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D, TensorI64Cpu1D
 import tensorflow as tf
 
 def inference(
     x: TensorF32Cpu2D,
     weight: TensorF32Cpu2D,
     bias: TensorF32Cpu1D,
-) -> TensorF32Cpu1D:
+) -> TensorI64Cpu1D:
     h = tf.matmul(x, weight)
     h = tf.nn.relu(h)
     h = h + bias
-    return tf.reduce_mean(h, axis=1)
+    return tf.argmax(tf.nn.softmax(h, axis=1), axis=1)
 ```
 
 ### Boundary and ABI contract (summary)
 
-- Python boundary types: `TensorF32Cpu2D` / `TensorF32Cpu1D` (import-free markers).
+- Python boundary types: `TensorF32Cpu2D` / `TensorF32Cpu1D` / `TensorI64Cpu1D`
+  (import-free markers); the classification head materializes exactly int64 rank-1 output.
 - Native type: `rextio_tensorflow_runtime::RxtTfTensor` (owned handle RAII;
   clones share `Rc` owner — never an unowned pointer fallback).
 - Extract: private `EagerTensor_Handle` then
@@ -469,8 +573,9 @@ ruff check src tests
 mypy src
 ```
 
-Focused unit tests cover claim accept/reject, lower emission into
-`rextio_tensorflow_runtime`, plugin API 1.3 loader contract, empty crate deps,
+Focused unit tests cover analyzer-resolved import aliases, claim accept/reject,
+positional-literal alignment, lower emission into
+`rextio_tensorflow_runtime`, plugin API 1.6 loader contract, empty crate deps,
 runtime-helper hardening (`RTLD_NOLOAD`, private bridge symbols, no
 `unwrap`/`panic!` in helpers), and **platform ABI profile source contracts**
 (certified macOS arm64, experimental Linux x86_64/aarch64, unsupported/
@@ -479,11 +584,15 @@ environment, requires exact TensorFlow 2.21.0, and fails if the configured
 interpreter or platform contract differs. Merged PR #1 produced hosted
 candidate-wheel real-Cargo evidence on macOS ARM64 and Linux x86_64. The
 declared certification class remains **macOS ARM64 only**; Linux stays
-experimental pending a separate support-promotion decision. The vertical
-slice is: rank-2 matmul
-→ rank-2 relu → scalar `for`/`if` selecting relu/sigmoid → rank-2 + rank-1
-bias → axis-1 mean. Other aliases and supported add rank pairs are covered at
-the unit claim/lower layer, not by separate real-Cargo fixtures. The Linux
+experimental pending a separate support-promotion decision. The original
+vertical slice remains rank-2 matmul → rank-2 activations → scalar Rust
+control flow → broadcast add → classification. The 0.1.2 follow-up adds a
+real-Cargo slice spanning rank-1 relu/sigmoid/tanh → functional multiply →
+rank-1 Softmax default/axis 0 → Abs/Neg/Square/Exp/Log/Sqrt → NHWC BiasAdd →
+subtraction → reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions →
+same-rank broadcast Maximum/Minimum → ArgMax axis 0, with CPU,
+NaN/Inf/domain/signed-zero, shape-error,
+no-host-resolve, provenance, and lifetime checks. The Linux
 probe is opt-in and does not claim certification when it has not been run.
 
 ---
@@ -493,11 +602,11 @@ probe is opt-in and does not claim certification when it has not been run.
 | Field | Value |
 | --- | --- |
 | Name | `rextio-tensorflow` |
-| Version | `0.1.0` |
+| Version | `0.1.2` |
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
 | Classifier | `Development Status :: 3 - Alpha` |
-| Release date | `2026-07-18` |
-| Distribution state | [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) live on PyPI; annotated tag `0.1.0` |
+| Release date | 2026-07-26 |
+| Distribution state | **Released** as [`rextio-tensorflow==0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) |
 | License | MIT |
 
 The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
@@ -505,16 +614,10 @@ and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
 `ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
 wheel metadata.
 
-This is the tagged public Alpha 0.1.0 source for
-`rextio/rextio-tensorflow`, released on GitHub and PyPI. Final CI run
-`29597803215` completed 13/13 jobs successfully, followed by the verified
-no-cache CPython 3.11 installation described above.
-
-The long description attached to the already-uploaded PyPI 0.1.0 artifacts was
-frozen from the pre-live candidate README and cannot be changed in place. It
-may therefore retain release-pending wording; this GitHub README records the
-verified post-release state. A future package version will carry the updated
-long description.
+This is the released 0.1.2 source contract. The prior public Alpha 0.1.0 final
+CI run `29597803215` completed 13/13 jobs successfully, followed by the
+verified no-cache CPython 3.11 installation described above; that historical
+evidence remains scoped to 0.1.0.
 
 For the intended Alpha architecture and staged scope, see the
 [0.1.0 implementation plan](docs/implementation-plan-0.1.0.md). Release-facing
@@ -530,7 +633,7 @@ current support contract.
 2. **Not a whole-project TensorFlow translator** — only the tabulated Alpha
    slice is claimable.
 3. **Not a performance product** — **no** speedup claim and **no** benchmark
-   release gate for 0.1.0.
+   release gate for 0.1.2.
 4. **Not a stable public ABI** — private EagerTensor bridge symbols and exact
    eager-context internals plus exact 2.21.0 / CPython 3.11 pins and the
    certified-vs-experimental platform profiles are intentional Alpha

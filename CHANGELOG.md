@@ -3,6 +3,117 @@
 All notable changes to `rextio-tensorflow` are documented here following Keep a
 Changelog and Semantic Versioning conventions.
 
+## [0.1.2] — 2026-07-26
+
+Public native-AOT Alpha release on PyPI. The expanded CPU surface is released;
+the CUDA E3 lane remains a build-only, non-certifying engineering candidate
+with `support_claim=false` and `certification_ready=false`.
+
+### Added
+
+- Add a Linux x86_64 GNU TensorFlow CUDA E3 **build-only** candidate for the
+  exact `tf.matmul → tf.nn.bias_add → tf.nn.relu →
+  tf.reduce_mean(axis=1)` float32 rank-1/rank-2 inference slice. CUDA values
+  must already reside on `cuda:0`; CUDA support, certification, performance,
+  training, transfers, and general real-GPU claims remain false. Shipping the
+  candidate does not promote it to supported CUDA functionality.
+- Add separate generated `rextio_tensorflow_cuda_runtime` /
+  `RxtTfCudaTensor` boundaries with exact TensorFlow 2.21 wheel reuse,
+  per-symbol provenance, full `TFE_ContextListDevices` GPU:0 enumeration,
+  exact backing-device equality, RAII ownership, and rejection when a
+  backward tape or forward accumulator may record the supplied inputs.
+- Add API 1.6 `DeviceValueMetadata`, exact
+  `rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64` authorization,
+  CUDA-first fail-closed claim/lower routing, a machine-readable non-certifying
+  contract, and a synthetic-provider Linux compile/link-only CI gate that
+  never imports TensorFlow or loads/executes the candidate.
+- Add an opt-in, manual real-NVIDIA first-stage evidence producer and offline
+  verifier. They require the frozen clean candidate checkout and record native
+  execution, parity, and lifetime evidence only; kernel activity and runtime
+  transfer profiling remain explicitly unverified, and
+  `support_claim=false` / `certification_ready=false` remain unchanged.
+- Add rank-1 float32 CPU `tf.nn.softmax` with the final axis omitted or
+  supplied as literal positional/keyword `axis=0`. The lowering reuses the
+  owned same-wheel TFE `Softmax` unary path, preserves the existing explicit
+  rank-2 `axis=1` contract, and rejects cross-rank axes, extra options,
+  dynamic literals, and forged metadata.
+- Add exact rank-1/rank-2 float32 CPU `tf.abs`, `tf.negative`, `tf.square`,
+  `tf.exp`, `tf.math.log`, and `tf.math.sqrt` calls. Generated Rust dispatches
+  owned same-wheel TFE `Abs`, `Neg`, `Square`, `Exp`, `Log`, and `Sqrt`
+  operations with rank/dtype/device revalidation and special-value parity
+  coverage.
+- Expand the bounded CPU surface with rank-1 `tf.nn.relu` / `sigmoid` / `tanh`;
+  exact `tf.multiply` / `tf.math.multiply`, `tf.subtract` /
+  `tf.math.subtract`, and `tf.divide` / `tf.math.divide` call targets; and
+  matching `*`, `-`, and `/` operators across the existing rank-1/rank-2
+  same-rank and trailing-broadcast matrix. Native execution reuses owned TFE
+  `Mul`, `Sub`, and `RealDiv` operations with the existing context/device/RAII
+  checks.
+- Generalize `tf.reduce_mean` and `tf.reduce_sum` to literal axis 0 or 1,
+  keyword or exactly aligned positional axis metadata, with named literal
+  `keepdims=True/False`. Add positional axis 0/1 ArgMax while retaining
+  default int64 output; positional Softmax axis 1 is accepted, while axis 0
+  remains explicit fallback because raw TFE Softmax is last-axis-only and
+  transpose is outside scope.
+- Add analyzer-driven canonical import-alias coverage, forged positional-axis
+  and keyword-type claim/lower guards, and a real-Cargo vertical slice spanning
+  the new unary, binary, reduction, classification, CPU residency, error,
+  special-value, no-host-resolve, and lifetime behavior.
+- Add bounded `tf.nn.bias_add` for rank-2 float32 CPU value plus rank-1 bias
+  with data format omitted or literal `NHWC`. The runtime resolves
+  `TFE_OpSetAttrString` from the exact owning TensorFlow 2.21 image, sets NHWC
+  explicitly, and preserves existing context/device/RAII/error boundaries.
+- Add exact top-level `tf.maximum` / `tf.minimum` for two float32 CPU tensors
+  of equal rank 1 or equal rank 2. Owned TFE `Maximum` / `Minimum` execution
+  preserves TensorFlow's same-rank broadcasting and incompatible-shape
+  behavior. Real-Cargo coverage compares finite values, broadcasting,
+  incompatible shapes, NaN/Inf classes, and signed-zero bits with eager
+  TensorFlow on each native CI platform.
+- Add `tf.nn.tanh(x)` for one positional float32 CPU rank-2 tensor with no
+  keywords. The owned TFE `Tanh` operation reuses the existing same-wheel,
+  RAII, eager-context, and float32 rank-2 result validation path.
+- Add `tf.reduce_sum(x, axis=1[, keepdims=False])` for float32 CPU rank-2
+  tensors. The owned TFE `Sum` path reuses the rank-1 axis handle, int32
+  `Tidx`, RAII ownership, and rank-1 result validation of reduce-mean; dynamic,
+  positional, duplicate, wrong, and extra metadata remains fail-closed.
+- Add binary `a * b` for float32 CPU rank-1/rank-2 same-rank or trailing
+  rank-2↔rank-1 broadcast pairs only. The owned TFE `Mul` path reuses the
+  existing binary RAII/context/device checks; functional aliases and scalars
+  remain outside the Alpha surface.
+
+- Narrow CPU inference classification-head lane: rank-2 float32
+  `tf.nn.softmax(axis=1)` followed by `tf.argmax(axis=1)` with the default
+  int64 rank-1 result. The generated runtime owns `Softmax`/`ArgMax` TFE ops,
+  uses a scalar int32 axis handle, validates/materializes the int64 boundary,
+  and preserves the existing RAII, provenance, exact-version, and fail-closed
+  contracts.
+- Claim/lower/fallback/lifetime coverage and real-Cargo numerical, shape, and
+  dtype E2E proof for the classification head on the existing macOS arm64 and
+  Linux x86_64 CI profiles.
+- Exact CPU int64 rank-1 parameter extraction for `TensorI64Cpu1D`, including
+  real-Cargo compile/runtime, rejection, materialization, and lifetime proof.
+
+### Changed
+
+- Treat the GNU ELF build ID as optional metadata in CUDA E3 runtime-image
+  evidence, recording `null` when an expected mapped TensorFlow wheel DSO does
+  not expose one. Exact mapped canonical wheel paths, SHA-256 digests, byte
+  sizes, and roles remain mandatory; present build IDs remain lowercase and
+  bounded. The documented verifier now runs only after a successful producer.
+- Require `rextio>=0.1.6,<0.2` and plugin API 1.6 for the 0.1.2 release while
+  preserving the existing CPU runtime behavior and helper text.
+- Prepared 0.1.1 compatibility with `rextio` 0.1.5 / plugin API 1.4 while
+  retaining this provider's declared API **1.3** and its existing package,
+  CPython, TensorFlow, and private-ABI pins.
+- Replaced provider-side exact host API equality guards with a compatible
+  minimum guard: host API 1.x minor 3 or newer is accepted, while older,
+  major-mismatched, or malformed hosts fail closed if dependencies are
+  bypassed. Core's loader remains the primary compatibility authority.
+- Reject standalone Rust lowering explicitly. This provider remains a PyO3
+  host-extension-only plugin and does not declare `artifact_capability()`.
+- Added focused Core 0.1.3/0.1.4/0.1.5 CI compatibility coverage without
+  changing the native macOS/Linux E2E gates.
+
 ## [0.1.0] — 2026-07-18
 
 Public native-AOT Alpha release, tagged and live on PyPI as
