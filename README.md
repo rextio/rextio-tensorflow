@@ -13,8 +13,8 @@ lanes:
 Generated code does **not** reimplement TensorFlow in pure Rust. Both lanes use
 owned thin wrappers over the same already-loaded TensorFlow wheel's public TFE
 C API plus a private EagerTensor bridge (`RTLD_NOLOAD`). The CUDA lane has a
-separate generated module and Rust tensor type; it is not a support,
-certification, release, or performance claim.
+separate generated module and Rust tensor type. Its inclusion in the package
+does not make it a CUDA support, certification, or performance claim.
 
 | Status field | Value |
 | --- | --- |
