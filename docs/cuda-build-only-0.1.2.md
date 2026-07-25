@@ -1,8 +1,9 @@
 # TensorFlow CUDA E3 build-only candidate
 
-This document describes an **unreleased, non-certifying** candidate. It is
-`support_claim=false` and `certification_ready=false`. It is not part of
-`rextio-tensorflow==0.1.0` and must not be represented as working CUDA support.
+This document describes the **non-certifying** CUDA candidate shipped in
+`rextio-tensorflow==0.1.2`. It remains `support_claim=false` and
+`certification_ready=false` and must not be represented as working or formally
+supported CUDA functionality.
 
 ## Frozen environment
 
@@ -102,13 +103,9 @@ This is a frozen environment, not a portability recipe:
 - CPython 3.11, TensorFlow `2.21.0`, and Rust `1.93.1`.
 - Core checkout exactly `7f47f0ce8cea0b6dbeb7fd3c733f65eeaa6bb5e0` and CUDA
   provider checkout exactly `cf65733f06b91a801f9806367f09948ee7162540`.
-- A clean TensorFlow-plugin checkout selected by `TF_REF`. After this PR is
-  integrated, set `TF_REF=0.1.2`; that is the default runnable path. Until
-  then, the current `0.1.2` target branch does not contain these two scripts,
-  so a reviewer/operator must set `TF_REF` to the current immutable full
-  PR-head SHA instead. Do not use a moving feature-branch name or record that
-  self-referential SHA in this document. After checkout, derive the full
-  lowercase SHA with `git rev-parse HEAD` and pass it explicitly via
+- A clean TensorFlow-plugin checkout selected by `TF_REF=0.1.2`. After
+  checkout, derive the full lowercase SHA with `git rev-parse HEAD` and pass it
+  explicitly via
   `--expected-tensorflow-commit`; the harness verifies that it descends from
   the frozen E3 base.
 - Exactly one usable `GPU:0`, with a permitted architecture from this closed
@@ -145,8 +142,6 @@ git -C "$E3_ROOT/checkouts/rextio-device-cuda" checkout --detach \
   cf65733f06b91a801f9806367f09948ee7162540
 export TF_ROOT="$E3_ROOT/checkouts/rextio-tensorflow"
 export TF_REF=0.1.2
-# Before this PR merges, replace 0.1.2 above with the current immutable full
-# PR-head SHA. The 0.1.2 default becomes runnable only after integration.
 git clone https://github.com/rextio/rextio-tensorflow.git "$TF_ROOT"
 git -C "$TF_ROOT" fetch --tags origin "$TF_REF"
 git -C "$TF_ROOT" checkout --detach "$TF_REF"

@@ -3,15 +3,20 @@
 All notable changes to `rextio-tensorflow` are documented here following Keep a
 Changelog and Semantic Versioning conventions.
 
-## [Unreleased]
+## [0.1.2] — 2026-07-26
+
+Public native-AOT Alpha release on PyPI. The expanded CPU surface is released;
+the CUDA E3 lane remains a build-only, non-certifying engineering candidate
+with `support_claim=false` and `certification_ready=false`.
 
 ### Added
 
 - Add a Linux x86_64 GNU TensorFlow CUDA E3 **build-only** candidate for the
   exact `tf.matmul → tf.nn.bias_add → tf.nn.relu →
   tf.reduce_mean(axis=1)` float32 rank-1/rank-2 inference slice. CUDA values
-  must already reside on `cuda:0`; support, certification, release,
-  performance, training, transfers, and real-GPU claims remain false.
+  must already reside on `cuda:0`; CUDA support, certification, performance,
+  training, transfers, and general real-GPU claims remain false. Shipping the
+  candidate does not promote it to supported CUDA functionality.
 - Add separate generated `rextio_tensorflow_cuda_runtime` /
   `RxtTfCudaTensor` boundaries with exact TensorFlow 2.21 wheel reuse,
   per-symbol provenance, full `TFE_ContextListDevices` GPU:0 enumeration,
@@ -95,8 +100,8 @@ Changelog and Semantic Versioning conventions.
   not expose one. Exact mapped canonical wheel paths, SHA-256 digests, byte
   sizes, and roles remain mandatory; present build IDs remain lowercase and
   bounded. The documented verifier now runs only after a successful producer.
-- Require `rextio>=0.1.6,<0.2` and plugin API 1.6 for the unreleased 0.1.2
-  branch while preserving the existing CPU runtime behavior and helper text.
+- Require `rextio>=0.1.6,<0.2` and plugin API 1.6 for the 0.1.2 release while
+  preserving the existing CPU runtime behavior and helper text.
 - Prepared 0.1.1 compatibility with `rextio` 0.1.5 / plugin API 1.4 while
   retaining this provider's declared API **1.3** and its existing package,
   CPython, TensorFlow, and private-ABI pins.

@@ -1,7 +1,7 @@
 # rextio-tensorflow
 
-**Unreleased 0.1.2 native-AOT Alpha.** The latest released package remains
-0.1.0 (released **2026-07-18**).
+**Released 0.1.2 native-AOT Alpha** on **2026-07-26**. The prior release was
+0.1.0 (2026-07-18).
 
 This is a Rextio **plugin API 1.6** provider with two deliberately separate
 lanes:
@@ -20,14 +20,14 @@ certification, release, or performance claim.
 | --- | --- |
 | Version | `0.1.2` (`src/rextio_tensorflow/__about__.py`) |
 | Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
-| Release state | **Unreleased — do not tag or publish**; latest release is [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) |
+| Release state | **Released 2026-07-26** as [`rextio-tensorflow==0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
 | CUDA candidate | Build-only hosted CI plus opt-in first-stage real-NVIDIA evidence; `support_claim=false`, `certification_ready=false` |
 
-The unreleased branch requires Core `rextio>=0.1.6,<0.2` and plugin API
-**1.6**. It rejects boundary-free standalone Rust lowering. CUDA lowering also
+The 0.1.2 release requires Core `rextio>=0.1.6,<0.2` and plugin API **1.6**.
+It rejects boundary-free standalone Rust lowering. CUDA lowering also
 requires exact authorization from
 `rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64`.
 
@@ -65,7 +65,7 @@ plugin registration, the generated runtime helper
 
 | Component | Contract | Enforcement / evidence |
 | --- | --- | --- |
-| Package version | `0.1.2` (unreleased) | `__about__.__version__` |
+| Package version | `0.1.2` | `__about__.__version__` |
 | CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
 | Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
 | Rextio package | **`>=0.1.6,<0.2`** | API 1.6 device metadata and authorization |
@@ -602,11 +602,11 @@ probe is opt-in and does not claim certification when it has not been run.
 | Field | Value |
 | --- | --- |
 | Name | `rextio-tensorflow` |
-| Version | `0.1.2` (unreleased) |
+| Version | `0.1.2` |
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
 | Classifier | `Development Status :: 3 - Alpha` |
-| Release date | Not yet released |
-| Distribution state | **Unreleased — no 0.1.2 tag or PyPI publication**; [`rextio-tensorflow==0.1.0`](https://pypi.org/project/rextio-tensorflow/0.1.0/) remains live |
+| Release date | 2026-07-26 |
+| Distribution state | **Released** as [`rextio-tensorflow==0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) |
 | License | MIT |
 
 The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
@@ -614,16 +614,10 @@ and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
 `ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
 wheel metadata.
 
-This is the unreleased 0.1.2 source on its integration branch. The tagged
-public Alpha 0.1.0 remains the latest GitHub/PyPI release; its final CI run
-`29597803215` completed 13/13 jobs successfully, followed by the verified
-no-cache CPython 3.11 installation described above.
-
-The long description attached to the already-uploaded PyPI 0.1.0 artifacts was
-frozen from the pre-live candidate README and cannot be changed in place. It
-may therefore retain release-pending wording; this GitHub README records the
-verified post-release state. A future package version will carry the updated
-long description.
+This is the released 0.1.2 source contract. The prior public Alpha 0.1.0 final
+CI run `29597803215` completed 13/13 jobs successfully, followed by the
+verified no-cache CPython 3.11 installation described above; that historical
+evidence remains scoped to 0.1.0.
 
 For the intended Alpha architecture and staged scope, see the
 [0.1.0 implementation plan](docs/implementation-plan-0.1.0.md). Release-facing
@@ -639,7 +633,7 @@ current support contract.
 2. **Not a whole-project TensorFlow translator** — only the tabulated Alpha
    slice is claimable.
 3. **Not a performance product** — **no** speedup claim and **no** benchmark
-   release gate for 0.1.0.
+   release gate for 0.1.2.
 4. **Not a stable public ABI** — private EagerTensor bridge symbols and exact
    eager-context internals plus exact 2.21.0 / CPython 3.11 pins and the
    certified-vs-experimental platform profiles are intentional Alpha
