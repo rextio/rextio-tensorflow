@@ -317,8 +317,6 @@ def capture_runtime_images(wheel_root: Path, maps: str, read_build_id: Callable[
             raise RuntimeError(f"expected TensorFlow runtime image is not mapped: {role}")
         relative = path.relative_to(wheel_root).as_posix()
         build_id = read_build_id(path)
-        if not build_id:
-            raise RuntimeError(f"expected TensorFlow runtime image has no build ID: {role}")
         rows.append({"role": role, "wheel_path": relative, "sha256": _sha256(path), "size_bytes": path.stat().st_size, "build_id": build_id, "mapped": True})
     return rows
 

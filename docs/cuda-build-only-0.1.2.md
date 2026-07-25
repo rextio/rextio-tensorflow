@@ -115,9 +115,11 @@ This is a frozen environment, not a portability recipe:
   set: `sm_60`, `sm_61`, `sm_70`, `sm_72`, `sm_75`, `sm_80`, `sm_86`,
   `sm_87`, `sm_89`, or `sm_90`. Other ordinals and SM values are rejected
   rather than generalized.
-- GNU binutils, including `readelf`, on `PATH`. The harness records GNU build
-  IDs from the TensorFlow wheel images and fails closed when an expected image
-  has no build ID.
+- GNU binutils, including `readelf`, on `PATH`. The harness records a lowercase
+  bounded GNU build ID when a TensorFlow wheel image exposes one; `null` is
+  recorded when it does not. Runtime-image identity still requires the exact
+  mapped canonical wheel path, SHA-256 digest, and byte size for every expected
+  image.
 
 The harness deliberately has no `toolkit_root` setting or command-line option.
 It reuses the active TensorFlow wheel and its already-loaded images; pointing
@@ -175,7 +177,7 @@ export TF_SM=sm_80
 E3_OUTPUT="$E3_OUT/cuda-e3-first-stage.json" E3_WORK="$E3_BUILD" \
 E3_CORE="$E3_ROOT/checkouts/rextio" \
 E3_PROVIDER="$E3_ROOT/checkouts/rextio-device-cuda" \
-"$E3_ROOT/venv/bin/python" - <<'PY'
+"$E3_ROOT/venv/bin/python" - <<'PY' &&
 import os
 import sys
 

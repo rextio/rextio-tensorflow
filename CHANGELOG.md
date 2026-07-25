@@ -90,6 +90,11 @@ Changelog and Semantic Versioning conventions.
 
 ### Changed
 
+- Treat the GNU ELF build ID as optional metadata in CUDA E3 runtime-image
+  evidence, recording `null` when an expected mapped TensorFlow wheel DSO does
+  not expose one. Exact mapped canonical wheel paths, SHA-256 digests, byte
+  sizes, and roles remain mandatory; present build IDs remain lowercase and
+  bounded. The documented verifier now runs only after a successful producer.
 - Require `rextio>=0.1.6,<0.2` and plugin API 1.6 for the unreleased 0.1.2
   branch while preserving the existing CPU runtime behavior and helper text.
 - Prepared 0.1.1 compatibility with `rextio` 0.1.5 / plugin API 1.4 while
