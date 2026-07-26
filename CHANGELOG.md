@@ -22,6 +22,30 @@ support-promotion, graph-fusion, or broader residency claims.
   handle reuse is impossible by construction. Graph / `FunctionDef` fusion,
   cross-generated-function residency, and broader variant caching require
   future Core/region API work and are **not** delivered in 0.1.3.
+- Add **bounded invocation-local reuse** carried by generated values: after a
+  boundary extract or operation result is fully validated, dtype / rank /
+  device facts are stamped on the owned handle (`TrustedResidentFacts`) and
+  reused for later typed checks of that same resident intermediate inside the
+  generated call graph. Boundary tensors are still validated exactly once on
+  extract; every operation result is validated before its facts are trusted.
+  Core plugin API 1.6 has **no** per-generated-function invocation/prologue
+  hook, so this is **not** a Core-injected `InvocationContext`, process-global
+  cache, or thread-local tensor/context table. A true explicit invocation
+  object spanning one generated function remains a Core capability gap.
+- Document that **`TF_Status` stays per operation**: TensorFlow 2.21.0 exports
+  `TF_NewStatus` / `TF_DeleteStatus` / `TF_SetStatus` / `TF_GetCode` /
+  `TF_Message` but no exact public `TF_ResetStatus` (or equivalent fail-closed
+  reset) on the bound framework image, so reusable status buffers are not
+  adopted.
+- Add real-Cargo coverage for a repeated typed-intermediate classification
+  chain and a self-contained **small-batch eager scoring** equivalence slice
+  (normalize subtract/divide → feature matmul+add → 4 scalar-controlled
+  relu/tanh rounds → head matmul+add → softmax/argmax) for batches 1 / 16 /
+  128, feature width 32, classes 8. Complete logits, probabilities, and
+  classes are compared across Python source, generated fallback, and forced
+  native routes. An optional `tf.function` Python diagnostic is labeled
+  non-headline and does **not** gate or imply native graph fusion. No speed
+  threshold and **no performance claim**.
 
 ### Changed
 
@@ -31,6 +55,9 @@ support-promotion, graph-fusion, or broader residency claims.
   all CUDA non-claims (`support_claim=false`, `certification_ready=false`).
 - CI push triggers now include the `0.1.3` integration branch in addition to
   `main`.
+- CUDA runtime source derivation continues to transform the audited CPU helper
+  (including trusted-fact device short-circuit + exact GPU:0 validation) and
+  keeps the frozen E3 callable surface; no CUDA contract promotion.
 
 ## [0.1.2] — 2026-07-26
 
