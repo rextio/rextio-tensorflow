@@ -360,8 +360,12 @@ Anything outside the tables above is either:
 - Explicit `tf.transpose` perm/conjugate/name; rank-1 or non-float32 transpose;
   matmul `transpose_*` / other matmul keywords
 - Graph / `tf.function` / `FunctionDef` fusion, cross-generated-function
-  residency, and process-global prepared-constant caches (0.1.3 only reuses
-  context-bound axes/permutation handles while a `BorrowedContext` `Rc` lives)
+  residency, process-global prepared-constant caches, and a Core-injected
+  per-generated-function `InvocationContext` (plugin API 1.6 has no
+  invocation/prologue hook). 0.1.3 reuses (1) context-bound axes/permutation
+  handles while a `BorrowedContext` `Rc` lives and (2) value-carried
+  dtype/rank/device facts on already-validated resident intermediates inside
+  one generated call graph — never a process-wide or thread-local tensor cache
 - In-place ops; scalar operands; inferred aliases such as `tf.math.truediv`;
   `tf.math.maximum` / `tf.math.minimum`, raw-op forms, and mixed-rank
   broadcasting for `tf.maximum` / `tf.minimum`
@@ -411,6 +415,35 @@ calls `py.import("tensorflow")`. By the time `RTLD_NOLOAD` runs, however, the
 three expected images from that exact active wheel must be mapped. If the
 imported wheel does not map them, initialization fails closed rather than
 loading a second TensorFlow runtime.
+
+### Invocation-local reuse (0.1.3 candidate; non-claim)
+
+Core `PLUGIN_API_VERSION` **1.6** exposes claim/lower/covers/describe/type
+vocabulary and optional `artifact_capability` only — **no**
+per-generated-function invocation or prologue hook. This plugin therefore does
+**not** invent a process-global, thread-local, or cross-context tensor/context
+cache.
+
+What 0.1.3 *does* deliver, carried by existing generated values:
+
+| Reuse | Scope | Notes |
+| --- | --- | --- |
+| Pinned Python eager context | `BorrowedContext` | Same synchronous capsule; no `TFE_NewContext` |
+| Prepared axes / transpose perm | `BorrowedContext` table | Context-bound RAII; not process-global |
+| Dtype / rank / device facts | `TrustedResidentFacts` on `OwnedTensorHandle` | Stamped after full validation; reused for later typed checks of that handle |
+| `TF_Status` | **Per operation** | No public `TF_ResetStatus` on TF 2.21.0; allocation stays fail-closed per op |
+
+**Avoided** after facts are trusted for a handle: redundant
+`TFE_TensorHandleDataType` / `NumDims` / `Dim` / `BackingDeviceName` queries
+for that same resident intermediate. **Not avoided**: boundary extract
+validation (exactly once), operation-result validation before stamping new
+facts, same-context checks, error messages, unsupported dtype/rank/device
+rejection, or PendingHandle / OwnedTensorHandle / PreparedHandle /
+BorrowedContext drop ordering.
+
+A true explicit `InvocationContext` spanning one generated function remains a
+**Core blocker** (needs a prologue/invocation hook, and optionally a
+fail-closed public status-reset symbol for reusable `TF_Status`).
 
 ---
 
@@ -577,6 +610,10 @@ pytest tests -m "not needs_cargo" -q
 # Real-Cargo E2E (run under CPython 3.11 + TF 2.21.0):
 pytest tests/e2e/test_alpha_real_cargo.py -q
 
+# Focused 0.1.3 slices (same suite; still equivalence-only, no speed gate):
+pytest tests/e2e/test_alpha_real_cargo.py::test_resident_intermediate_chain_real_cargo -q
+pytest tests/e2e/test_alpha_real_cargo.py::test_small_batch_scoring_equivalence_real_cargo -q
+
 # Opt-in Linux experimental probe (skipped unless env set + Linux host):
 REXTIO_TF_LINUX_PROBE=1 pytest tests/e2e/test_linux_experimental_probe.py -q
 
@@ -584,6 +621,17 @@ REXTIO_TF_LINUX_PROBE=1 pytest tests/e2e/test_linux_experimental_probe.py -q
 ruff check src tests
 mypy src
 ```
+
+**Small-batch scoring interpretation:** the
+`test_small_batch_scoring_equivalence_real_cargo` case is a self-contained
+non-release eager scoring workload (normalize → feature affine → 4
+scalar-controlled relu/tanh rounds → head → softmax/argmax) over deterministic
+float32 fixtures with batches **1 / 16 / 128**, feature width **32**, classes
+**8**. It compares **complete** logits, probabilities, and classes among
+Python source, generated fallback, and forced native. It does **not** assert
+latency thresholds and makes **no** performance claim. An optional
+`tf.function` Python diagnostic in that test is labeled non-headline and does
+not gate or imply native graph fusion. Kernel-heavy existing E2E cases remain.
 
 Focused unit tests cover analyzer-resolved import aliases, claim accept/reject,
 positional-literal alignment, lower emission into
@@ -605,10 +653,17 @@ subtraction → reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions 
 same-rank broadcast Maximum/Minimum → ArgMax axis 0, with CPU,
 NaN/Inf/domain/signed-zero, shape-error,
 no-host-resolve, provenance, and lifetime checks. The 0.1.3 candidate adds
-default rank-2 `tf.transpose` and context-bound prepared axis/permutation
-handles for reductions, ArgMax, and transpose without graph fusion or
-cross-function residency. The Linux probe is opt-in and does not claim
-certification when it has not been run.
+default rank-2 `tf.transpose`, context-bound prepared axis/permutation
+handles for reductions, ArgMax, and transpose, and **bounded
+invocation-local reuse** of validated dtype/rank/device facts on resident
+intermediates (value-carried `TrustedResidentFacts`, not a global cache).
+Core still lacks a per-generated-function prologue hook, so a true explicit
+invocation object is **not** delivered. A self-contained small-batch eager
+scoring equivalence slice (batches 1/16/128, feature width 32, classes 8)
+compares full logits, probabilities, and classes across Python / fallback /
+native without speed thresholds. No graph fusion or cross-function
+residency. The Linux probe is opt-in and does not claim certification when
+it has not been run.
 
 ---
 

@@ -257,6 +257,10 @@ def _build_cuda_runtime() -> str:
     )
 
     old_backing = """        fn backing_device(&self) -> PyResult<String> {
+            if let Some(facts) = self.inner.facts.borrow().as_ref() {
+                // Trusted resident facts already include a validated device string.
+                return Ok(facts.device.clone());
+            }
             let status = OwnedStatus::new(self.inner.api)?;
             let pointer = unsafe {
                 (self.inner.api.tfe_tensor_handle_backing_device_name)(
@@ -280,6 +284,10 @@ def _build_cuda_runtime() -> str:
         }
 """
     new_backing = """        fn backing_device(&self) -> PyResult<String> {
+            if let Some(facts) = self.inner.facts.borrow().as_ref() {
+                // Trusted resident facts already include a validated device string.
+                return Ok(facts.device.clone());
+            }
             let expected = self.inner.context.exact_gpu0_device()?;
             let status = OwnedStatus::new(self.inner.api)?;
             let pointer = unsafe {

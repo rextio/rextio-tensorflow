@@ -646,6 +646,31 @@ mod rextio_tensorflow_runtime {
         }
     }
 
+    // TF_Status allocation remains per operation. TensorFlow 2.21.0 public C API
+    // exports TF_NewStatus / TF_DeleteStatus / TF_SetStatus / TF_GetCode /
+    // TF_Message from the owning framework image, but no exact public
+    // TF_ResetStatus (or equivalent fail-closed status-reset) symbol. Reusing a
+    // status buffer via TF_SetStatus(OK, ...) is not accepted as an exact public
+    // reset contract, so each op allocates a fresh OwnedStatus and deletes it on
+    // drop. A future Core per-generated-function invocation object could host a
+    // resettable status only when such a symbol is bound fail-closed.
+
+    /// Invocation-local trusted facts for one owned tensor handle.
+    ///
+    /// Core plugin API 1.6 has no per-generated-function invocation/prologue
+    /// hook, so this plugin does not invent a process-global, thread-local, or
+    /// cross-context tensor cache. Instead, after a boundary extract or an
+    /// operation result is fully validated, dtype/rank/device facts are stamped
+    /// on this handle and reused for later typed checks of the same resident
+    /// intermediate inside the generated call graph that carries the value.
+    /// Boundary tensors are still validated exactly once on extract; every
+    /// operation result is validated sufficiently before its facts are trusted.
+    struct TrustedResidentFacts {
+        dtype: c_int,
+        rank: c_int,
+        device: String,
+    }
+
     /// Context-bound prepared constant tensor handles.
     ///
     /// Safety boundary (0.1.3): this table is owned by a single
@@ -654,7 +679,10 @@ mod rextio_tensorflow_runtime {
     /// never shared across distinct `BorrowedContext` instances even when two
     /// borrows observe the same raw `TFE_Context*`. Graph / FunctionDef fusion
     /// and cross-generated-function residency require future Core/region API
-    /// work and are intentionally out of scope.
+    /// work and are intentionally out of scope. A true explicit InvocationContext
+    /// spanning one generated function also requires a Core prologue hook and is
+    /// not delivered here; reuse is limited to value-carried facts plus this
+    /// context-bound prepared table.
     struct PreparedHandle {
         api: &'static Api,
         raw: *mut TfeTensorHandle,
@@ -881,6 +909,8 @@ mod rextio_tensorflow_runtime {
                 api,
                 raw,
                 context,
+                // Facts start empty; stamp only after full validation.
+                facts: RefCell::new(None),
                 _thread_affine: PhantomData,
             }))
         }
@@ -900,6 +930,10 @@ mod rextio_tensorflow_runtime {
         raw: *mut TfeTensorHandle,
         // The Python-owned context must outlive every eager tensor handle.
         context: Rc<BorrowedContext>,
+        // Invocation-local trusted dtype/rank/device facts. Carried by this
+        // OwnedTensorHandle (shared only via Rc clones of RxtTfTensor). Never a
+        // process-global or thread-local tensor/context cache.
+        facts: RefCell<Option<TrustedResidentFacts>>,
         _thread_affine: PhantomData<Rc<()>>,
     }
 
@@ -956,6 +990,10 @@ mod rextio_tensorflow_runtime {
         }
 
         fn backing_device(&self) -> PyResult<String> {
+            if let Some(facts) = self.inner.facts.borrow().as_ref() {
+                // Trusted resident facts already include a validated device string.
+                return Ok(facts.device.clone());
+            }
             let status = OwnedStatus::new(self.inner.api)?;
             let pointer = unsafe {
                 (self.inner.api.tfe_tensor_handle_backing_device_name)(
@@ -979,6 +1017,10 @@ mod rextio_tensorflow_runtime {
         }
 
         fn rank(&self) -> PyResult<c_int> {
+            if let Some(facts) = self.inner.facts.borrow().as_ref() {
+                // Trusted resident intermediate: reuse the validated rank fact.
+                return Ok(facts.rank);
+            }
             let status = OwnedStatus::new(self.inner.api)?;
             let rank = unsafe {
                 (self.inner.api.tfe_tensor_handle_num_dims)(
@@ -991,6 +1033,21 @@ mod rextio_tensorflow_runtime {
         }
 
         fn validate_typed(&self, expected_type: c_int, expected_rank: c_int) -> PyResult<()> {
+            {
+                let facts = self.inner.facts.borrow();
+                if let Some(facts) = facts.as_ref() {
+                    if facts.dtype == expected_type && facts.rank == expected_rank {
+                        // Trusted resident intermediate or already-validated
+                        // boundary tensor: avoid redundant dtype/rank/device
+                        // TFE queries for this handle inside the call graph.
+                        return Ok(());
+                    }
+                }
+            }
+            // Mismatched or absent facts require a full fail-closed validation
+            // before any facts may be trusted again.
+            *self.inner.facts.borrow_mut() = None;
+
             let actual_type = unsafe { (self.inner.api.tfe_tensor_handle_data_type)(self.inner.raw) };
             if actual_type != expected_type {
                 let expected = if expected_type == TF_FLOAT { "float32" } else { "int64" };
@@ -1019,7 +1076,12 @@ mod rextio_tensorflow_runtime {
                     )));
                 }
             }
-            let _ = self.backing_device()?;
+            let device = self.backing_device()?;
+            *self.inner.facts.borrow_mut() = Some(TrustedResidentFacts {
+                dtype: actual_type,
+                rank,
+                device,
+            });
             Ok(())
         }
 
