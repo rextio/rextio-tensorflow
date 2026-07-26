@@ -1793,6 +1793,24 @@ def test_small_batch_scoring_equivalence_real_cargo(project: CertifiedProject) -
     assert "rextio_tensorflow_runtime::argmax_axis1" in rust
     assert "struct TrustedResidentFacts" in rust
 
+    # Lock literal four-round scalar control flow inside each scoring body.
+    # Scope to the generated pyfunction so inference's separate for/if cannot
+    # satisfy this contract.
+    for rust_fn in (
+        "tf_app__kernels__small_batch_logits",
+        "tf_app__kernels__small_batch_probabilities",
+        "tf_app__kernels__small_batch_classes",
+    ):
+        marker = f"fn {rust_fn}<"
+        assert marker in rust, rust_fn
+        start = rust.index(marker)
+        rest = rust[start + len(marker) :]
+        # Next top-level generated entry (or module init) ends this body.
+        next_fn = rest.find("\nfn ")
+        body = rest if next_fn < 0 else rest[:next_fn]
+        assert "for round_idx in 0..4 {" in body, rust_fn
+        assert "if __rextio_checked_rem(round_idx, 2)? == 0 {" in body, rust_fn
+
     feature_width = 32
     classes = 8
     for batch in (1, 16, 128):
