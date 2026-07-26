@@ -186,6 +186,26 @@ def argmax_axis0(x: TensorF32Cpu2D) -> TensorI64Cpu1D:
     return tf.argmax(x, 0)
 
 
+def transpose_default(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.transpose(x)
+
+
+def double_transpose(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    # Two default transposes in one function exercise the prepared-perm helper
+    # path repeatedly; this is not a measured cache-hit counter.
+    return tf.transpose(tf.transpose(x))
+
+
+def transpose_then_reduce_mean_axis1(x: TensorF32Cpu2D) -> TensorF32Cpu1D:
+    return tf.reduce_mean(tf.transpose(x), axis=1)
+
+
+def dual_reduce_mean_sum_axis1(x: TensorF32Cpu2D) -> TensorF32Cpu1D:
+    # Two reductions share one extracted operand in the lowered function so the
+    # prepared-axis helper path runs more than once; not an empirical hit count.
+    return tf.reduce_mean(x, axis=1) + tf.reduce_sum(x, axis=1)
+
+
 def cpu_surface_vertical(
     matrix: TensorF32Cpu2D,
     gate_input: TensorF32Cpu1D,
@@ -476,6 +496,10 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     assert "TF_TensorData" in rust
     assert "TF_INT64" in rust
     assert "axis_one_scalar" in rust
+    assert "PreparedConstantTable" in rust
+    assert "prepared_reduction_axis" in rust
+    assert "prepared_argmax_axis" in rust
+    assert "prepared_transpose_perm_rank2" in rust
     assert "Rc<OwnedTensorHandle>" in rust
     assert "unsafe impl Send" not in rust
     assert "RTLD_DEFAULT" not in rust
@@ -639,6 +663,143 @@ def test_i64_parameter_boundary_real_cargo(project: CertifiedProject) -> None:
     assert held.dtype == tf.int64
     assert held.shape == (4,)
     assert _tensor_equal(held, expected)
+
+
+def test_transpose_parity_lifetime_and_prepared_constant_path_real_cargo(
+    project: CertifiedProject,
+) -> None:
+    """Certify default transpose parity/lifetime and prepared-constant helper path.
+
+    Coverage proves source structure (prepared slots/helpers) plus repeated
+    native execution. It does not instrument or claim measured cache-hit rates.
+    """
+    tf = _import_tf()
+    transpose_record = _route_of(project, "tf_app.kernels.transpose_default")
+    assert transpose_record["native_status"] == "accepted"
+    assert transpose_record["route"] == "native-plugin:rextio-tensorflow"
+    assert [claim["rule_id"] for claim in transpose_record.get("plugin_claims") or []] == [
+        "rextio-tensorflow/transpose-f32-cpu-2d"
+    ]
+    double_record = _route_of(project, "tf_app.kernels.double_transpose")
+    assert double_record["native_status"] == "accepted"
+    assert {claim["rule_id"] for claim in double_record.get("plugin_claims") or []} == {
+        "rextio-tensorflow/transpose-f32-cpu-2d"
+    }
+    dual_record = _route_of(project, "tf_app.kernels.dual_reduce_mean_sum_axis1")
+    assert dual_record["native_status"] == "accepted"
+    dual_rules = {claim["rule_id"] for claim in dual_record.get("plugin_claims") or []}
+    assert "rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d" in dual_rules
+    assert "rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d" in dual_rules
+    assert "rextio-tensorflow/add-binop-f32-cpu" in dual_rules
+
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "rextio_tensorflow_runtime::transpose" in rust
+    assert "prepared_transpose_perm_rank2" in rust
+    assert "prepared_reduction_axis" in rust
+    assert 'OwnedOp::new(Rc::clone(&context), "Transpose"' in rust
+    assert "Handles are never process-global" in rust
+    assert "impl Drop for BorrowedContext" in rust
+    assert "prepared.replace(PreparedConstantTable::empty())" in rust
+
+    # Non-square rank-2 so swapped shape is observable (2×3 → 3×2).
+    matrix = tf.constant(
+        [[1.0, -2.0, 3.0], [-4.0, 0.5, 1.25]],
+        dtype=tf.float32,
+    )
+    assert tuple(matrix.shape) == (2, 3)
+    matrix_snapshot = tf.identity(matrix)
+    transpose_checker = project.equivalence_checker(
+        "tf_app.kernels.transpose_default",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_transpose = transpose_checker(matrix)
+    eager_transpose = tf.transpose(matrix_snapshot)
+    assert _tensor_equal(native_transpose, eager_transpose)
+    assert native_transpose.dtype == tf.float32
+    assert tuple(native_transpose.shape) == (3, 2)
+    assert tuple(eager_transpose.shape) == (3, 2)
+    assert "CPU" in native_transpose.device
+    assert _tensor_equal(matrix, matrix_snapshot)
+
+    double_checker = project.equivalence_checker(
+        "tf_app.kernels.double_transpose",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_double = double_checker(matrix)
+    eager_double = tf.transpose(tf.transpose(matrix_snapshot))
+    assert _tensor_equal(native_double, eager_double)
+    assert tuple(native_double.shape) == (2, 3)
+
+    chain_checker = project.equivalence_checker(
+        "tf_app.kernels.transpose_then_reduce_mean_axis1",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_chain = chain_checker(matrix)
+    eager_chain = tf.reduce_mean(tf.transpose(matrix_snapshot), axis=1)
+    assert _tensor_equal(native_chain, eager_chain)
+    assert tuple(native_chain.shape) == (3,)
+
+    dual_checker = project.equivalence_checker(
+        "tf_app.kernels.dual_reduce_mean_sum_axis1",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_dual = dual_checker(matrix)
+    eager_dual = tf.reduce_mean(matrix_snapshot, axis=1) + tf.reduce_sum(
+        matrix_snapshot, axis=1
+    )
+    assert _tensor_equal(native_dual, eager_dual)
+    assert tuple(native_dual.shape) == (2,)
+
+    special = tf.constant(
+        [[float("nan"), 1.0, float("inf")], [float("-inf"), -0.0, 0.0]],
+        dtype=tf.float32,
+    )
+    assert tuple(special.shape) == (2, 3)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import transpose_default
+
+        native_special = transpose_default(special)
+    eager_special = tf.transpose(special)
+    assert tuple(native_special.shape) == (3, 2)
+    assert _float_special_values_equal(native_special, eager_special)
+
+    with _native_mode(project, "native"):
+        from tf_app.kernels import transpose_default
+
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            transpose_default(tf.constant([[1.0]], dtype=tf.float64))
+        with pytest.raises(Exception, match="rank-2"):
+            transpose_default(tf.constant([1.0, 2.0], dtype=tf.float32))
+
+    held_input = tf.identity(matrix_snapshot)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import (
+            double_transpose,
+            dual_reduce_mean_sum_axis1,
+            transpose_default,
+        )
+
+        held_transpose = transpose_default(held_input)
+        held_double = double_transpose(held_input)
+        held_dual = dual_reduce_mean_sum_axis1(held_input)
+    del held_input
+    import gc
+
+    gc.collect()
+    assert _tensor_equal(held_transpose, eager_transpose)
+    assert tuple(held_transpose.shape) == (3, 2)
+    assert _tensor_equal(held_double, eager_double)
+    assert _tensor_equal(held_dual, eager_dual)
 
 
 def test_reduce_sum_axis1_real_cargo(project: CertifiedProject) -> None:
@@ -976,6 +1137,19 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             "rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d"
         },
         "tf_app.kernels.argmax_axis0": {"rextio-tensorflow/argmax-axis0-i64-cpu-2d"},
+        "tf_app.kernels.transpose_default": {"rextio-tensorflow/transpose-f32-cpu-2d"},
+        "tf_app.kernels.double_transpose": {
+            "rextio-tensorflow/transpose-f32-cpu-2d",
+        },
+        "tf_app.kernels.transpose_then_reduce_mean_axis1": {
+            "rextio-tensorflow/transpose-f32-cpu-2d",
+            "rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d",
+        },
+        "tf_app.kernels.dual_reduce_mean_sum_axis1": {
+            "rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d",
+            "rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d",
+            "rextio-tensorflow/add-binop-f32-cpu",
+        },
     }
     for qualname, rules in expected_rules.items():
         record = _route_of(project, qualname)
@@ -1100,6 +1274,26 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             "tf_app.kernels.argmax_axis0",
             (matrix,),
             lambda args: tf.argmax(args[0], 0),
+        ),
+        (
+            "tf_app.kernels.transpose_default",
+            (matrix,),
+            lambda args: tf.transpose(args[0]),
+        ),
+        (
+            "tf_app.kernels.double_transpose",
+            (matrix,),
+            lambda args: tf.transpose(tf.transpose(args[0])),
+        ),
+        (
+            "tf_app.kernels.transpose_then_reduce_mean_axis1",
+            (matrix,),
+            lambda args: tf.reduce_mean(tf.transpose(args[0]), axis=1),
+        ),
+        (
+            "tf_app.kernels.dual_reduce_mean_sum_axis1",
+            (matrix,),
+            lambda args: tf.reduce_mean(args[0], axis=1) + tf.reduce_sum(args[0], axis=1),
         ),
     )
     for qualname, args, eager_call in finite_cases:

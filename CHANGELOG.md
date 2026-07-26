@@ -3,6 +3,35 @@
 All notable changes to `rextio-tensorflow` are documented here following Keep a
 Changelog and Semantic Versioning conventions.
 
+## [0.1.3] — Unreleased
+
+Plugin-only candidate on the 0.1.2 released foundation. No speedup, CUDA
+support-promotion, graph-fusion, or broader residency claims.
+
+### Added
+
+- Add exact CPU float32 rank-2 `tf.transpose(x)` / `tensorflow.transpose(x)`
+  lowering for the default Python semantics only (no `perm`, `conjugate`,
+  `name`, or other args/kwargs). Owned same-wheel TFE `Transpose` receives a
+  context-bound int32 permutation handle `[1, 0]`, revalidates float32 /
+  CPU:0 / rank-2, and fails closed on unsupported forms.
+- Add a small **context-bound prepared-constant cache** for reusable axes and
+  the rank-2 transpose permutation used by reductions, ArgMax, and transpose.
+  Handles are owned by the `BorrowedContext` RAII table (not process-global):
+  reuse is allowed only while the same context `Rc` remains live; cross-context
+  handle reuse is impossible by construction. Graph / `FunctionDef` fusion,
+  cross-generated-function residency, and broader variant caching require
+  future Core/region API work and are **not** delivered in 0.1.3.
+
+### Changed
+
+- Bump package version to `0.1.3` (Unreleased candidate) while preserving the
+  0.1.2 / 0.1.0 release history, TensorFlow `2.21.0` pin, CPython 3.11 ABI
+  checks, borrowed TensorHandle payload sharing at the Python boundary, and
+  all CUDA non-claims (`support_claim=false`, `certification_ready=false`).
+- CI push triggers now include the `0.1.3` integration branch in addition to
+  `main`.
+
 ## [0.1.2] — 2026-07-26
 
 Public native-AOT Alpha release on PyPI. The expanded CPU surface is released;

@@ -57,7 +57,7 @@ def _payload() -> dict[str, object]:
         },
         "package": {
             "distribution": "rextio-tensorflow",
-            "version": "0.1.2",
+            "version": "0.1.3",
             "plugin_module": "rextio_tensorflow.plugin",
             "native_module": "_rextio_native",
         },
@@ -200,6 +200,28 @@ def test_native_module_identity_is_exactly_top_level_rextio_native() -> None:
         ("payload", "package", "native_module"),
         "cuda_app._rextio_native",
     )
+    with pytest.raises(EvidenceError, match="package or module identity"):
+        validate_envelope(envelope)
+
+
+def test_package_version_identity_matches_013_candidate_and_cannot_drift() -> None:
+    """Producer/verifier fixtures label the active package version only."""
+    from pathlib import Path
+
+    from rextio_tensorflow import __version__
+
+    assert __version__ == "0.1.3"
+    assert _payload()["package"]["version"] == __version__
+    assert _payload()["contract"]["support_claim"] is False
+    assert _payload()["contract"]["certification_ready"] is False
+    root = Path(__file__).resolve().parents[1]
+    producer = (root / "scripts" / "certify_cuda_candidate.py").read_text(encoding="utf-8")
+    verifier = (root / "scripts" / "verify_cuda_e3_evidence.py").read_text(encoding="utf-8")
+    assert '"version": "0.1.3"' in producer
+    assert '"version": "0.1.3"' in verifier
+    assert '"version": "0.1.2"' not in producer
+    assert '"version": "0.1.2"' not in verifier
+    envelope = _mutated(("payload", "package", "version"), "0.1.2")
     with pytest.raises(EvidenceError, match="package or module identity"):
         validate_envelope(envelope)
 

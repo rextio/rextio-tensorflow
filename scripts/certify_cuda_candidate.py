@@ -548,7 +548,7 @@ def build_payload(*, source: dict[str, Any], environment: dict[str, Any], toolch
     """Build precisely the payload accepted by the offline closed verifier."""
     return {
         "contract": {"evidence_schema": "tensorflow-cuda-e3-real-nvidia-v1", "verification_scope": "schema-and-integrity-only", "producer_assertions": "self-attested-by-manual-harness", "support_claim": False, "certification_ready": False, "plugin_api": "1.6"},
-        "package": {"distribution": "rextio-tensorflow", "version": "0.1.2", "plugin_module": "rextio_tensorflow.plugin", "native_module": "_rextio_native"},
+        "package": {"distribution": "rextio-tensorflow", "version": "0.1.3", "plugin_module": "rextio_tensorflow.plugin", "native_module": "_rextio_native"},
         "source": source,
         "environment": environment,
         "toolchain": toolchain,

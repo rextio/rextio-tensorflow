@@ -163,23 +163,39 @@ def _build_cuda_runtime() -> str:
     )
     source = _replace_once(
         source,
-        """            Ok(Rc::new(Self {
-                api,
-                raw: raw.cast::<TfeContext>(),
-                _python_context: context.unbind(),
-                _python_capsule: capsule.unbind(),
-                _thread_affine: PhantomData,
-            }))
+        """        fn prepared_transpose_perm_rank2(self: &Rc<Self>) -> PyResult<*mut TfeTensorHandle> {
+            {
+                let table = self.prepared.borrow();
+                if let Some(handle) = table.transpose_perm_rank2.as_ref() {
+                    return Ok(handle.pointer());
+                }
+            }
+            let created = make_prepared_transpose_perm_rank2(self.api)?;
+            let pointer = created.pointer();
+            let mut table = self.prepared.borrow_mut();
+            if let Some(handle) = table.transpose_perm_rank2.as_ref() {
+                return Ok(handle.pointer());
+            }
+            table.transpose_perm_rank2 = Some(created);
+            Ok(pointer)
         }
     }
 """,
-        """            Ok(Rc::new(Self {
-                api,
-                raw: raw.cast::<TfeContext>(),
-                _python_context: context.unbind(),
-                _python_capsule: capsule.unbind(),
-                _thread_affine: PhantomData,
-            }))
+        """        fn prepared_transpose_perm_rank2(self: &Rc<Self>) -> PyResult<*mut TfeTensorHandle> {
+            {
+                let table = self.prepared.borrow();
+                if let Some(handle) = table.transpose_perm_rank2.as_ref() {
+                    return Ok(handle.pointer());
+                }
+            }
+            let created = make_prepared_transpose_perm_rank2(self.api)?;
+            let pointer = created.pointer();
+            let mut table = self.prepared.borrow_mut();
+            if let Some(handle) = table.transpose_perm_rank2.as_ref() {
+                return Ok(handle.pointer());
+            }
+            table.transpose_perm_rank2 = Some(created);
+            Ok(pointer)
         }
 
         fn exact_gpu0_device(&self) -> PyResult<String> {
@@ -399,7 +415,7 @@ def _build_cuda_runtime() -> str:
     source = _remove_between(
         source,
         "    pub fn sigmoid(",
-        "    fn reduction_axis_handle(",
+        "    fn make_prepared_reduction_axis(",
         "remove non-E3 unary operations",
     )
     source = _remove_between(

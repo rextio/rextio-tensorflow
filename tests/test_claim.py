@@ -46,6 +46,7 @@ from rextio_tensorflow.claim.reductions import (
     SUM_GENERAL_RULE,
     SUM_RULE,
 )
+from rextio_tensorflow.claim.transpose import TRANSPOSE_RULE
 from rextio_tensorflow.claim.unary import (
     ABS_RULE,
     EXP_RULE,
@@ -1103,3 +1104,71 @@ def test_rejects_matmul_wrong_rank() -> None:
 def test_not_covered_unknown_call() -> None:
     result = PLUGIN.claim(_call("tensorflow.cos", (TENSOR_F32_CPU_2D,)), CONFIG)
     assert isinstance(result, NotCovered)
+
+
+@pytest.mark.parametrize("target", ("tensorflow.transpose", "tf.transpose"))
+def test_claims_default_rank2_transpose(target: str) -> None:
+    result = PLUGIN.claim(_call(target, (TENSOR_F32_CPU_2D,)), CONFIG)
+    assert result == Claimed(rule_id=TRANSPOSE_RULE, result_type=TENSOR_F32_CPU_2D)
+
+
+@pytest.mark.parametrize(
+    ("target", "operands", "operand_literals", "keywords"),
+    (
+        ("tensorflow.transpose", (TENSOR_F32_CPU_1D,), (), ()),
+        ("tensorflow.transpose", (TENSOR_I64_CPU_1D,), (), ()),
+        (
+            "tensorflow.transpose",
+            (TENSOR_F32_CPU_2D,),
+            (),
+            (
+                KeywordArg(
+                    name="perm",
+                    arg_type="list",
+                    literal=ClaimLiteral(is_literal=True, value=(1, 0)),
+                ),
+            ),
+        ),
+        (
+            "tensorflow.transpose",
+            (TENSOR_F32_CPU_2D,),
+            (),
+            (
+                KeywordArg(
+                    name="conjugate",
+                    arg_type="bool",
+                    literal=ClaimLiteral(is_literal=True, value=False),
+                ),
+            ),
+        ),
+        (
+            "tf.transpose",
+            (TENSOR_F32_CPU_2D, TENSOR_F32_CPU_2D),
+            (),
+            (),
+        ),
+        (
+            "tensorflow.transpose",
+            (TENSOR_F32_CPU_2D,),
+            (ClaimLiteral(is_literal=True, value=0),),
+            (),
+        ),
+    ),
+)
+def test_transpose_near_misses_fail_closed(
+    target: str,
+    operands: tuple[str | None, ...],
+    operand_literals: tuple[ClaimLiteral, ...],
+    keywords: tuple[KeywordArg, ...],
+) -> None:
+    result = PLUGIN.claim(
+        _call(
+            target,
+            operands,
+            operand_literals=operand_literals,
+            keywords=keywords,
+        ),
+        CONFIG,
+    )
+    assert isinstance(result, Rejected)
+    assert result.diagnostic.code in {"RXTP-TENSORFLOW-039", "RXTP-TENSORFLOW-010"}

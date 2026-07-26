@@ -39,6 +39,7 @@ COVERAGE = CoverageDecl(
         "tensorflow.math.reduce_sum",
         "tensorflow.nn.softmax",
         "tensorflow.argmax",
+        "tensorflow.transpose",
     ),
 )
 
