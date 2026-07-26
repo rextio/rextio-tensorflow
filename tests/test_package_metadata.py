@@ -1,4 +1,4 @@
-"""Package metadata contracts for the released 0.1.2 Alpha expansion."""
+"""Package metadata contracts for the 0.1.3 Unreleased Alpha candidate."""
 
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROJECT = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
     "project"
 ]
+CHANGELOG = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+CI_WORKFLOW = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+    encoding="utf-8"
+)
 
 
 def test_release_metadata_is_public_alpha() -> None:
@@ -22,7 +26,21 @@ def test_release_metadata_is_public_alpha() -> None:
 
 
 def test_release_version_and_exact_tensorflow_pin() -> None:
-    """The release preserves its exact private-ABI runtime boundary."""
-    assert __version__ == "0.1.2"
+    """The candidate preserves its exact private-ABI runtime boundary."""
+    assert __version__ == "0.1.3"
     assert "tensorflow==2.21.0" in PROJECT["dependencies"]
     assert "rextio>=0.1.6,<0.2" in PROJECT["dependencies"]
+
+
+def test_changelog_marks_013_unreleased_and_preserves_012_history() -> None:
+    assert "## [0.1.3] — Unreleased" in CHANGELOG
+    assert "## [0.1.2] — 2026-07-26" in CHANGELOG
+    assert "context-bound prepared-constant cache" in CHANGELOG
+    assert "tf.transpose" in CHANGELOG
+    assert "FunctionDef" in CHANGELOG
+    assert "not** delivered in 0.1.3" in CHANGELOG or "not delivered in 0.1.3" in CHANGELOG
+
+
+def test_ci_triggers_include_013_branch() -> None:
+    assert '- "0.1.3"' in CI_WORKFLOW or "- '0.1.3'" in CI_WORKFLOW
+    assert 'version("rextio-tensorflow") == "0.1.3"' in CI_WORKFLOW

@@ -509,6 +509,10 @@ def test_producer_payload_is_accepted_by_the_offline_verifier_without_tensorflow
         result=result,
     )
     assert payload["package"]["native_module"] == "_rextio_native"
+    assert payload["package"]["version"] == "0.1.3"
+    assert payload["package"]["distribution"] == "rextio-tensorflow"
+    assert payload["contract"]["support_claim"] is False
+    assert payload["contract"]["certification_ready"] is False
     assert verifier.validate_envelope(verifier.make_envelope(payload)) == payload
 
 

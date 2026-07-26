@@ -258,7 +258,7 @@ def _validate_identity(payload: dict[str, Any]) -> None:
         package,
         {
             "distribution": "rextio-tensorflow",
-            "version": "0.1.2",
+            "version": "0.1.3",
             "plugin_module": "rextio_tensorflow.plugin",
             "native_module": "_rextio_native",
         },

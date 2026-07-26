@@ -549,6 +549,7 @@ def test_cuda_runtime_is_separate_and_contains_exact_safety_anchors() -> None:
         "pub fn tanh(",
         "pub fn reduce_sum",
         "pub fn argmax",
+        "pub fn transpose(",
         "pub fn reduce_mean_axis0",
         "pub fn reduce_mean_axis1_keepdims",
         "pub fn extract_i64",

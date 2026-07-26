@@ -1,4 +1,4 @@
-"""rextio-tensorflow 0.1.2: public Alpha plugin for a tiny TensorFlow slice.
+"""rextio-tensorflow 0.1.3: public Alpha plugin for a tiny TensorFlow slice.
 
 Implements Rextio plugin API 1.6 for a float32 CPU inference surface and a
 bounded Linux CUDA build-only candidate lowered

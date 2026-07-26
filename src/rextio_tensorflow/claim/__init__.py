@@ -12,6 +12,7 @@ from rextio_tensorflow.claim import (
     cuda,
     matmul,
     reductions,
+    transpose,
     unary,
 )
 
@@ -25,7 +26,16 @@ def claim(site: ClaimSite, config: RextioConfig) -> ClaimResult:
     types, receiver metadata, and static keyword literals.
     """
     del config
-    for lane in (cuda, matmul, activations, unary, add, reductions, classification):
+    for lane in (
+        cuda,
+        matmul,
+        activations,
+        unary,
+        add,
+        reductions,
+        classification,
+        transpose,
+    ):
         result = lane.try_claim(site)
         if result is not None:
             return result

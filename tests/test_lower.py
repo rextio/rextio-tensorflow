@@ -47,6 +47,7 @@ from rextio_tensorflow.claim.reductions import (
     SUM_GENERAL_RULE,
     SUM_RULE,
 )
+from rextio_tensorflow.claim.transpose import TRANSPOSE_RULE
 from rextio_tensorflow.claim.unary import (
     ABS_RULE,
     EXP_RULE,
@@ -1063,3 +1064,65 @@ def test_functional_lower_rejects_claimed_or_rendered_receiver() -> None:
         )
     with pytest.raises(ValueError, match="forbids receivers"):
         PLUGIN.lower(claimed, replace(context, receiver="x"))
+
+
+@pytest.mark.parametrize("target", ("tensorflow.transpose", "tf.transpose"))
+def test_lower_default_rank2_transpose(target: str) -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target=target,
+        operand_types=(TENSOR_F32_CPU_2D,),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=TRANSPOSE_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+    )
+    lowered = PLUGIN.lower(
+        claimed,
+        LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),
+    )
+    assert lowered.rust == "rextio_tensorflow_runtime::transpose(&h)?"
+    helper = runtime_module_helpers()
+    assert 'OwnedOp::new(Rc::clone(&context), "Transpose"' in helper
+    assert "prepared_transpose_perm_rank2" in helper
+    assert "Tperm" in helper
+
+
+def test_transpose_lower_rejects_forged_metadata() -> None:
+    claimed = ClaimSite(
+        kind="call",
+        target="tensorflow.transpose",
+        operand_types=(TENSOR_F32_CPU_2D,),
+        file_path="",
+        line=0,
+        column=0,
+        rule_id=TRANSPOSE_RULE,
+        result_type=TENSOR_F32_CPU_2D,
+        keywords=(
+            KeywordArg(
+                name="perm",
+                arg_type="list",
+                literal=ClaimLiteral(is_literal=True, value=(1, 0)),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="malformed transpose"):
+        PLUGIN.lower(
+            claimed,
+            LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),
+        )
+    with pytest.raises(ValueError, match="malformed transpose"):
+        PLUGIN.lower(
+            ClaimSite(
+                kind="call",
+                target="tensorflow.transpose",
+                operand_types=(TENSOR_F32_CPU_1D,),
+                file_path="",
+                line=0,
+                column=0,
+                rule_id=TRANSPOSE_RULE,
+                result_type=TENSOR_F32_CPU_2D,
+            ),
+            LoweringContext(operands=("h",), target_language="rust", fresh_name=_fresh_name),
+        )
