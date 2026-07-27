@@ -3,10 +3,12 @@
 All notable changes to `rextio-tensorflow` are documented here following Keep a
 Changelog and Semantic Versioning conventions.
 
-## [0.1.3] — Unreleased
+## [0.1.3] — 2026-07-27
 
-Plugin-only candidate on the 0.1.2 released foundation. No speedup, CUDA
-support-promotion, graph-fusion, or broader residency claims.
+Public Alpha release on PyPI. Plugin-only on the 0.1.2 released foundation. No
+speedup, CUDA support-promotion, graph-fusion, or broader residency claims. The
+CUDA E3 lane remains a build-only, non-certifying engineering candidate with
+`support_claim=false` and `certification_ready=false`.
 
 ### Added
 
@@ -49,8 +51,8 @@ support-promotion, graph-fusion, or broader residency claims.
 
 ### Changed
 
-- Bump package version to `0.1.3` (Unreleased candidate) while preserving the
-  0.1.2 / 0.1.0 release history, TensorFlow `2.21.0` pin, CPython 3.11 ABI
+- Bump package version to `0.1.3` for the public Alpha release while preserving
+  the 0.1.2 / 0.1.0 release history, TensorFlow `2.21.0` pin, CPython 3.11 ABI
   checks, borrowed TensorHandle payload sharing at the Python boundary, and
   all CUDA non-claims (`support_claim=false`, `certification_ready=false`).
 - CI push triggers now include the `0.1.3` integration branch in addition to

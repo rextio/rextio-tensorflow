@@ -1,4 +1,4 @@
-"""Package metadata contracts for the 0.1.3 Unreleased Alpha candidate."""
+"""Package metadata contracts for the released 0.1.3 public Alpha."""
 
 from __future__ import annotations
 
@@ -26,19 +26,21 @@ def test_release_metadata_is_public_alpha() -> None:
 
 
 def test_release_version_and_exact_tensorflow_pin() -> None:
-    """The candidate preserves its exact private-ABI runtime boundary."""
+    """The release preserves its exact private-ABI runtime boundary."""
     assert __version__ == "0.1.3"
     assert "tensorflow==2.21.0" in PROJECT["dependencies"]
     assert "rextio>=0.1.6,<0.2" in PROJECT["dependencies"]
 
 
-def test_changelog_marks_013_unreleased_and_preserves_012_history() -> None:
-    assert "## [0.1.3] — Unreleased" in CHANGELOG
+def test_changelog_marks_013_released_and_preserves_012_history() -> None:
+    assert "## [0.1.3] — 2026-07-27" in CHANGELOG
     assert "## [0.1.2] — 2026-07-26" in CHANGELOG
     assert "context-bound prepared-constant cache" in CHANGELOG
     assert "tf.transpose" in CHANGELOG
     assert "FunctionDef" in CHANGELOG
     assert "not** delivered in 0.1.3" in CHANGELOG or "not delivered in 0.1.3" in CHANGELOG
+    assert "support_claim=false" in CHANGELOG
+    assert "certification_ready=false" in CHANGELOG
 
 
 def test_ci_triggers_include_013_branch() -> None:

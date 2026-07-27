@@ -1,8 +1,8 @@
 # rextio-tensorflow
 
-**0.1.3 Unreleased candidate** (plugin-only) on the **released 0.1.2** native-AOT
-Alpha foundation (**2026-07-26**). The prior public release was 0.1.0
-(2026-07-18).
+**Released public Alpha 0.1.3** (plugin-only) on **2026-07-27**, building on the
+**released 0.1.2** native-AOT Alpha foundation (**2026-07-26**). The earlier
+initial public Alpha was 0.1.0 (2026-07-18).
 
 This is a Rextio **plugin API 1.6** provider with two deliberately separate
 lanes:
@@ -21,14 +21,14 @@ does not make it a CUDA support, certification, or performance claim.
 | --- | --- |
 | Version | `0.1.3` (`src/rextio_tensorflow/__about__.py`) |
 | Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
-| Release state | **0.1.3 Unreleased candidate**; prior release [`0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) (2026-07-26) |
+| Release state | **Released 2026-07-27** as [`rextio-tensorflow==0.1.3`](https://pypi.org/project/rextio-tensorflow/0.1.3/); prior release [`0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) (2026-07-26) |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
 | CUDA candidate | Build-only hosted CI plus opt-in first-stage real-NVIDIA evidence; `support_claim=false`, `certification_ready=false` |
 
-The 0.1.3 candidate (and released 0.1.2) requires Core `rextio>=0.1.6,<0.2`
-and plugin API **1.6**. It rejects boundary-free standalone Rust lowering.
+The 0.1.3 release requires Core `rextio>=0.1.6,<0.2` and plugin API **1.6**.
+It rejects boundary-free standalone Rust lowering.
 CUDA lowering also requires exact authorization from
 `rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64`.
 
@@ -44,7 +44,7 @@ support. See
 for the exact Linux GNU/CPython 3.11/TF 2.21.0/Rust 1.93.1 pins, clean
 candidate checkout, GPU:0/permitted-SM boundary, and commands.
 
-Final release verification completed on 2026-07-18: GitHub Actions
+The 0.1.0 final release verification completed on 2026-07-18: GitHub Actions
 [run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
 finished **13/13 jobs successfully**, and a no-cache CPython 3.11 install from
 PyPI resolved `tensorflow==2.21.0` and exposed the plugin entry point with API
@@ -66,7 +66,7 @@ plugin registration, the generated runtime helper
 
 | Component | Contract | Enforcement / evidence |
 | --- | --- | --- |
-| Package version | `0.1.3` (Unreleased candidate) | `__about__.__version__` |
+| Package version | `0.1.3` | `__about__.__version__` |
 | CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
 | Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
 | Rextio package | **`>=0.1.6,<0.2`** | API 1.6 device metadata and authorization |
@@ -416,7 +416,7 @@ three expected images from that exact active wheel must be mapped. If the
 imported wheel does not map them, initialization fails closed rather than
 loading a second TensorFlow runtime.
 
-### Invocation-local reuse (0.1.3 candidate; non-claim)
+### Invocation-local reuse (0.1.3; bounded non-claim)
 
 Core `PLUGIN_API_VERSION` **1.6** exposes claim/lower/covers/describe/type
 vocabulary and optional `artifact_capability` only — **no**
@@ -585,19 +585,16 @@ def inference(
 
 ```bash
 # Latest published package on PyPI (CPython 3.11 only; installs
-# tensorflow==2.21.0 exactly). This is rextio-tensorflow==0.1.2:
-python -m pip install --no-cache-dir "rextio-tensorflow==0.1.2"
+# tensorflow==2.21.0 exactly). This is rextio-tensorflow==0.1.3:
+python -m pip install --no-cache-dir "rextio-tensorflow==0.1.3"
 
-# This git tree is the 0.1.3 Unreleased source/integration candidate (not on
-# PyPI). Contributors working from the candidate checkout:
+# Editable/dev install from this source tree:
 python -m pip install -e ".[dev]"
 ```
 
-The latest published package is `rextio-tensorflow==0.1.2` with plugin API
+The latest published package is `rextio-tensorflow==0.1.3` with plugin API
 **1.6** entry-point metadata and the exact TensorFlow 2.21.0 dependency. The
-`0.1.3` string in this tree is an Unreleased candidate only — it is not
-implied to be installable from PyPI. The exact CPython, TensorFlow, ABI, and
-platform requirements above still apply.
+exact CPython, TensorFlow, ABI, and platform requirements above still apply.
 
 ---
 
@@ -652,7 +649,7 @@ rank-1 Softmax default/axis 0 → Abs/Neg/Square/Exp/Log/Sqrt → NHWC BiasAdd �
 subtraction → reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions →
 same-rank broadcast Maximum/Minimum → ArgMax axis 0, with CPU,
 NaN/Inf/domain/signed-zero, shape-error,
-no-host-resolve, provenance, and lifetime checks. The 0.1.3 candidate adds
+no-host-resolve, provenance, and lifetime checks. The 0.1.3 release adds
 default rank-2 `tf.transpose`, context-bound prepared axis/permutation
 handles for reductions, ArgMax, and transpose, and **bounded
 invocation-local reuse** of validated dtype/rank/device facts on resident
@@ -675,8 +672,8 @@ it has not been run.
 | Version | `0.1.3` |
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
 | Classifier | `Development Status :: 3 - Alpha` |
-| Release date | Unreleased (candidate on 0.1.2 foundation) |
-| Distribution state | **0.1.3 Unreleased**; prior release [`0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) |
+| Release date | 2026-07-27 |
+| Distribution state | **Released** as [`rextio-tensorflow==0.1.3`](https://pypi.org/project/rextio-tensorflow/0.1.3/); prior release [`0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) (2026-07-26) |
 | License | MIT |
 
 The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
@@ -684,7 +681,7 @@ and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
 `ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
 wheel metadata.
 
-This is the 0.1.3 Unreleased candidate source contract on the released 0.1.2
+This is the released 0.1.3 public Alpha source contract on the 0.1.2
 foundation. The prior public Alpha 0.1.0 final CI run `29597803215` completed
 13/13 jobs successfully, followed by the verified no-cache CPython 3.11
 installation described above; that historical evidence remains scoped to
