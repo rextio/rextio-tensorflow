@@ -13,6 +13,7 @@ _RUNTIME_MODULE = r"""
 mod rextio_tensorflow_runtime {
     use pyo3::prelude::*;
     use pyo3::types::PyAny;
+    use std::cell::RefCell;
     use std::ffi::{CStr, CString};
     use std::marker::PhantomData;
     use std::os::raw::{c_char, c_int, c_void};
@@ -645,12 +646,113 @@ mod rextio_tensorflow_runtime {
         }
     }
 
+    // TF_Status allocation remains per operation. TensorFlow 2.21.0 public C API
+    // exports TF_NewStatus / TF_DeleteStatus / TF_SetStatus / TF_GetCode /
+    // TF_Message from the owning framework image, but no exact public
+    // TF_ResetStatus (or equivalent fail-closed status-reset) symbol. Reusing a
+    // status buffer via TF_SetStatus(OK, ...) is not accepted as an exact public
+    // reset contract, so each op allocates a fresh OwnedStatus and deletes it on
+    // drop. A future Core per-generated-function invocation object could host a
+    // resettable status only when such a symbol is bound fail-closed.
+
+    /// Invocation-local trusted facts for one owned tensor handle.
+    ///
+    /// Core plugin API 1.6 has no per-generated-function invocation/prologue
+    /// hook, so this plugin does not invent a process-global, thread-local, or
+    /// cross-context tensor cache. Instead, after a boundary extract or an
+    /// operation result is fully validated, dtype/rank/device facts are stamped
+    /// on this handle and reused for later typed checks of the same resident
+    /// intermediate inside the generated call graph that carries the value.
+    /// Boundary tensors are still validated exactly once on extract; every
+    /// operation result is validated sufficiently before its facts are trusted.
+    struct TrustedResidentFacts {
+        dtype: c_int,
+        rank: c_int,
+        device: String,
+    }
+
+    /// Context-bound prepared constant tensor handles.
+    ///
+    /// Safety boundary (0.1.3): this table is owned by a single
+    /// `BorrowedContext` value and therefore by one `Rc` ownership graph for
+    /// that Python eager context borrow. Handles are never process-global and
+    /// never shared across distinct `BorrowedContext` instances even when two
+    /// borrows observe the same raw `TFE_Context*`. Graph / FunctionDef fusion
+    /// and cross-generated-function residency require future Core/region API
+    /// work and are intentionally out of scope. A true explicit InvocationContext
+    /// spanning one generated function also requires a Core prologue hook and is
+    /// not delivered here; reuse is limited to value-carried facts plus this
+    /// context-bound prepared table.
+    struct PreparedHandle {
+        api: &'static Api,
+        raw: *mut TfeTensorHandle,
+    }
+
+    impl PreparedHandle {
+        fn new(api: &'static Api, raw: *mut TfeTensorHandle) -> Self {
+            Self { api, raw }
+        }
+
+        fn pointer(&self) -> *mut TfeTensorHandle {
+            self.raw
+        }
+    }
+
+    impl Drop for PreparedHandle {
+        fn drop(&mut self) {
+            if !self.raw.is_null() {
+                unsafe { (self.api.tfe_delete_tensor_handle)(self.raw) };
+                self.raw = std::ptr::null_mut();
+            }
+        }
+    }
+
+    struct PreparedConstantTable {
+        reduction_axis_0: Option<PreparedHandle>,
+        reduction_axis_1: Option<PreparedHandle>,
+        argmax_axis_0: Option<PreparedHandle>,
+        argmax_axis_1: Option<PreparedHandle>,
+        transpose_perm_rank2: Option<PreparedHandle>,
+    }
+
+    impl PreparedConstantTable {
+        fn empty() -> Self {
+            Self {
+                reduction_axis_0: None,
+                reduction_axis_1: None,
+                argmax_axis_0: None,
+                argmax_axis_1: None,
+                transpose_perm_rank2: None,
+            }
+        }
+    }
+
     struct BorrowedContext {
         api: &'static Api,
         raw: *mut TfeContext,
+        // Python eager-context anchors. These must outlive every prepared TFE
+        // handle cached below. Because Rust drops struct fields in declaration
+        // order after `Drop::drop`, a custom Drop clears `prepared` first while
+        // these anchors are still alive.
         _python_context: Py<PyAny>,
         _python_capsule: Py<PyAny>,
+        // Interior mutability is thread-affine with the rest of this context.
+        prepared: RefCell<PreparedConstantTable>,
         _thread_affine: PhantomData<Rc<()>>,
+    }
+
+    impl Drop for BorrowedContext {
+        fn drop(&mut self) {
+            // Drop prepared TFE handles first, while `_python_context` and
+            // `_python_capsule` are still alive. Declaration-order field drop
+            // would release those Python anchors before `prepared`, which can
+            // delete cached context-bound handles after their eager-context
+            // anchors are gone. Replacing the table with empty here forces
+            // PreparedHandle Drop under live context anchors; the remaining
+            // empty table and Python fields then drop normally.
+            let _cleared = self.prepared.replace(PreparedConstantTable::empty());
+            drop(_cleared);
+        }
     }
 
     impl BorrowedContext {
@@ -690,8 +792,91 @@ mod rextio_tensorflow_runtime {
                 raw: raw.cast::<TfeContext>(),
                 _python_context: context.unbind(),
                 _python_capsule: capsule.unbind(),
+                prepared: RefCell::new(PreparedConstantTable::empty()),
                 _thread_affine: PhantomData,
             }))
+        }
+
+        fn prepared_reduction_axis(self: &Rc<Self>, axis: i32) -> PyResult<*mut TfeTensorHandle> {
+            if axis != 0 && axis != 1 {
+                return Err(value_error(format!(
+                    "expected reduction axis 0 or 1, got {axis}"
+                )));
+            }
+            {
+                let table = self.prepared.borrow();
+                let existing = if axis == 0 {
+                    table.reduction_axis_0.as_ref()
+                } else {
+                    table.reduction_axis_1.as_ref()
+                };
+                if let Some(handle) = existing {
+                    return Ok(handle.pointer());
+                }
+            }
+            let created = make_prepared_reduction_axis(self.api, axis)?;
+            let pointer = created.pointer();
+            let mut table = self.prepared.borrow_mut();
+            let slot = if axis == 0 {
+                &mut table.reduction_axis_0
+            } else {
+                &mut table.reduction_axis_1
+            };
+            if let Some(handle) = slot.as_ref() {
+                // Another borrow of this same context filled the slot first.
+                return Ok(handle.pointer());
+            }
+            *slot = Some(created);
+            Ok(pointer)
+        }
+
+        fn prepared_argmax_axis(self: &Rc<Self>, axis: i32) -> PyResult<*mut TfeTensorHandle> {
+            if axis != 0 && axis != 1 {
+                return Err(value_error(format!(
+                    "expected argmax axis 0 or 1, got {axis}"
+                )));
+            }
+            {
+                let table = self.prepared.borrow();
+                let existing = if axis == 0 {
+                    table.argmax_axis_0.as_ref()
+                } else {
+                    table.argmax_axis_1.as_ref()
+                };
+                if let Some(handle) = existing {
+                    return Ok(handle.pointer());
+                }
+            }
+            let created = make_prepared_argmax_axis(self.api, axis)?;
+            let pointer = created.pointer();
+            let mut table = self.prepared.borrow_mut();
+            let slot = if axis == 0 {
+                &mut table.argmax_axis_0
+            } else {
+                &mut table.argmax_axis_1
+            };
+            if let Some(handle) = slot.as_ref() {
+                return Ok(handle.pointer());
+            }
+            *slot = Some(created);
+            Ok(pointer)
+        }
+
+        fn prepared_transpose_perm_rank2(self: &Rc<Self>) -> PyResult<*mut TfeTensorHandle> {
+            {
+                let table = self.prepared.borrow();
+                if let Some(handle) = table.transpose_perm_rank2.as_ref() {
+                    return Ok(handle.pointer());
+                }
+            }
+            let created = make_prepared_transpose_perm_rank2(self.api)?;
+            let pointer = created.pointer();
+            let mut table = self.prepared.borrow_mut();
+            if let Some(handle) = table.transpose_perm_rank2.as_ref() {
+                return Ok(handle.pointer());
+            }
+            table.transpose_perm_rank2 = Some(created);
+            Ok(pointer)
         }
     }
 
@@ -724,6 +909,8 @@ mod rextio_tensorflow_runtime {
                 api,
                 raw,
                 context,
+                // Facts start empty; stamp only after full validation.
+                facts: RefCell::new(None),
                 _thread_affine: PhantomData,
             }))
         }
@@ -743,6 +930,10 @@ mod rextio_tensorflow_runtime {
         raw: *mut TfeTensorHandle,
         // The Python-owned context must outlive every eager tensor handle.
         context: Rc<BorrowedContext>,
+        // Invocation-local trusted dtype/rank/device facts. Carried by this
+        // OwnedTensorHandle (shared only via Rc clones of RxtTfTensor). Never a
+        // process-global or thread-local tensor/context cache.
+        facts: RefCell<Option<TrustedResidentFacts>>,
         _thread_affine: PhantomData<Rc<()>>,
     }
 
@@ -799,6 +990,10 @@ mod rextio_tensorflow_runtime {
         }
 
         fn backing_device(&self) -> PyResult<String> {
+            if let Some(facts) = self.inner.facts.borrow().as_ref() {
+                // Trusted resident facts already include a validated device string.
+                return Ok(facts.device.clone());
+            }
             let status = OwnedStatus::new(self.inner.api)?;
             let pointer = unsafe {
                 (self.inner.api.tfe_tensor_handle_backing_device_name)(
@@ -822,6 +1017,10 @@ mod rextio_tensorflow_runtime {
         }
 
         fn rank(&self) -> PyResult<c_int> {
+            if let Some(facts) = self.inner.facts.borrow().as_ref() {
+                // Trusted resident intermediate: reuse the validated rank fact.
+                return Ok(facts.rank);
+            }
             let status = OwnedStatus::new(self.inner.api)?;
             let rank = unsafe {
                 (self.inner.api.tfe_tensor_handle_num_dims)(
@@ -834,6 +1033,21 @@ mod rextio_tensorflow_runtime {
         }
 
         fn validate_typed(&self, expected_type: c_int, expected_rank: c_int) -> PyResult<()> {
+            {
+                let facts = self.inner.facts.borrow();
+                if let Some(facts) = facts.as_ref() {
+                    if facts.dtype == expected_type && facts.rank == expected_rank {
+                        // Trusted resident intermediate or already-validated
+                        // boundary tensor: avoid redundant dtype/rank/device
+                        // TFE queries for this handle inside the call graph.
+                        return Ok(());
+                    }
+                }
+            }
+            // Mismatched or absent facts require a full fail-closed validation
+            // before any facts may be trusted again.
+            *self.inner.facts.borrow_mut() = None;
+
             let actual_type = unsafe { (self.inner.api.tfe_tensor_handle_data_type)(self.inner.raw) };
             if actual_type != expected_type {
                 let expected = if expected_type == TF_FLOAT { "float32" } else { "int64" };
@@ -862,7 +1076,12 @@ mod rextio_tensorflow_runtime {
                     )));
                 }
             }
-            let _ = self.backing_device()?;
+            let device = self.backing_device()?;
+            *self.inner.facts.borrow_mut() = Some(TrustedResidentFacts {
+                dtype: actual_type,
+                rank,
+                device,
+            });
             Ok(())
         }
 
@@ -939,6 +1158,43 @@ mod rextio_tensorflow_runtime {
             }
             unsafe {
                 std::ptr::write(data.cast::<i32>(), axis);
+            }
+            Ok(tensor)
+        }
+
+        fn transpose_perm_rank2(api: &'static Api) -> PyResult<Self> {
+            // Default Python tf.transpose on rank-2 uses perm=[1, 0].
+            let dimensions = [2i64];
+            let raw = unsafe {
+                (api.tf_allocate_tensor)(
+                    TF_INT32,
+                    dimensions.as_ptr(),
+                    1,
+                    2 * std::mem::size_of::<i32>(),
+                )
+            };
+            if raw.is_null() {
+                return Err(runtime_error(
+                    "TF_AllocateTensor failed for transpose permutation",
+                ));
+            }
+            let tensor = Self { api, raw };
+            let byte_size = unsafe { (api.tf_tensor_byte_size)(tensor.raw.cast_const()) };
+            if byte_size != 2 * std::mem::size_of::<i32>() {
+                return Err(runtime_error(format!(
+                    "unexpected transpose-perm tensor byte size {byte_size}"
+                )));
+            }
+            let data = unsafe { (api.tf_tensor_data)(tensor.raw.cast_const()) };
+            if data.is_null() {
+                return Err(runtime_error(
+                    "TF_TensorData returned null for transpose permutation",
+                ));
+            }
+            unsafe {
+                let values = data.cast::<i32>();
+                std::ptr::write(values, 1);
+                std::ptr::write(values.add(1), 0);
             }
             Ok(tensor)
         }
@@ -1374,11 +1630,7 @@ mod rextio_tensorflow_runtime {
         Python::attach(|_py| unary(input, "Softmax"))
     }
 
-    fn reduction_axis_handle(
-        context: Rc<BorrowedContext>,
-        axis: i32,
-    ) -> PyResult<Rc<OwnedTensorHandle>> {
-        let api = context.api;
+    fn make_prepared_reduction_axis(api: &'static Api, axis: i32) -> PyResult<PreparedHandle> {
         let status = OwnedStatus::new(api)?;
         let tensor = OwnedTfTensor::axis_one(api, axis)?;
         let raw = unsafe { (api.tfe_new_tensor_handle)(tensor.raw, status.pointer()) };
@@ -1387,23 +1639,63 @@ mod rextio_tensorflow_runtime {
         // TFE_NewTensorHandle retains the Tensor storage; the temporary
         // TF_Tensor remains caller-owned and is deleted immediately here.
         drop(tensor);
-        pending.into_owned(context)
+        let raw = pending.into_raw();
+        if raw.is_null() {
+            return Err(runtime_error(
+                "TFE_NewTensorHandle returned null for reduction axis",
+            ));
+        }
+        Ok(PreparedHandle::new(api, raw))
     }
 
-    fn argmax_axis_handle(
-        context: Rc<BorrowedContext>,
-        axis: i32,
-    ) -> PyResult<Rc<OwnedTensorHandle>> {
-        let api = context.api;
+    fn make_prepared_argmax_axis(api: &'static Api, axis: i32) -> PyResult<PreparedHandle> {
         let status = OwnedStatus::new(api)?;
         let tensor = OwnedTfTensor::axis_one_scalar(api, axis)?;
         let raw = unsafe { (api.tfe_new_tensor_handle)(tensor.raw, status.pointer()) };
         let pending = PendingHandle::new(api, raw);
         status.check("TFE_NewTensorHandle(argmax axis)")?;
         // The eager handle retains Tensor storage; `tensor` is deleted before
-        // the returned RAII handle can be used by ArgMax.
+        // the prepared handle is installed in the context-bound table.
         drop(tensor);
-        pending.into_owned(context)
+        let raw = pending.into_raw();
+        if raw.is_null() {
+            return Err(runtime_error(
+                "TFE_NewTensorHandle returned null for argmax axis",
+            ));
+        }
+        Ok(PreparedHandle::new(api, raw))
+    }
+
+    fn make_prepared_transpose_perm_rank2(api: &'static Api) -> PyResult<PreparedHandle> {
+        let status = OwnedStatus::new(api)?;
+        let tensor = OwnedTfTensor::transpose_perm_rank2(api)?;
+        let raw = unsafe { (api.tfe_new_tensor_handle)(tensor.raw, status.pointer()) };
+        let pending = PendingHandle::new(api, raw);
+        status.check("TFE_NewTensorHandle(transpose perm)")?;
+        drop(tensor);
+        let raw = pending.into_raw();
+        if raw.is_null() {
+            return Err(runtime_error(
+                "TFE_NewTensorHandle returned null for transpose permutation",
+            ));
+        }
+        Ok(PreparedHandle::new(api, raw))
+    }
+
+    fn reduction_axis_handle(
+        context: Rc<BorrowedContext>,
+        axis: i32,
+    ) -> PyResult<*mut TfeTensorHandle> {
+        // Reuse a context-bound prepared axis handle when this BorrowedContext
+        // Rc still owns it. Distinct BorrowedContext values never share slots.
+        context.prepared_reduction_axis(axis)
+    }
+
+    fn argmax_axis_handle(
+        context: Rc<BorrowedContext>,
+        axis: i32,
+    ) -> PyResult<*mut TfeTensorHandle> {
+        context.prepared_argmax_axis(axis)
     }
 
     fn reduce_axis(
@@ -1425,7 +1717,7 @@ mod rextio_tensorflow_runtime {
         let op = OwnedOp::new(Rc::clone(&context), op_name, &status)?;
         op.set_device(&device, &status)?;
         op.add_input(input.pointer(), &status)?;
-        op.add_input(axis.raw, &status)?;
+        op.add_input(axis, &status)?;
         op.set_type("T", TF_FLOAT)?;
         op.set_type("Tidx", TF_INT32)?;
         op.set_bool("keep_dims", keep_dims)?;
@@ -1489,7 +1781,7 @@ mod rextio_tensorflow_runtime {
         let op = OwnedOp::new(Rc::clone(&context), "ArgMax", &status)?;
         op.set_device(&device, &status)?;
         op.add_input(input.pointer(), &status)?;
-        op.add_input(axis.raw, &status)?;
+        op.add_input(axis, &status)?;
         op.set_type("T", TF_FLOAT)?;
         op.set_type("Tidx", TF_INT32)?;
         op.set_type("output_type", TF_INT64)?;
@@ -1506,6 +1798,27 @@ mod rextio_tensorflow_runtime {
     /// ArgMax with statically-proven scalar axis=1 and default int64 output.
     pub fn argmax_axis1(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
         Python::attach(|_py| argmax(input, 1))
+    }
+
+    /// Default ``tf.transpose(x)`` for float32 CPU rank-2 (perm=[1, 0] only).
+    pub fn transpose(input: &RxtTfTensor) -> PyResult<RxtTfTensor> {
+        Python::attach(|_py| {
+            input.validate_f32(2)?;
+            let status = OwnedStatus::new(input.inner.api)?;
+            let context = input.context();
+            let device = input.backing_device()?;
+            let perm = context.prepared_transpose_perm_rank2()?;
+            let op = OwnedOp::new(Rc::clone(&context), "Transpose", &status)?;
+            op.set_device(&device, &status)?;
+            op.add_input(input.pointer(), &status)?;
+            op.add_input(perm, &status)?;
+            op.set_type("T", TF_FLOAT)?;
+            op.set_type("Tperm", TF_INT32)?;
+            let result =
+                RxtTfTensor::from_pending(op.execute_one(&status)?, context)?;
+            result.validate_f32(2)?;
+            Ok(result)
+        })
     }
 
     #[allow(dead_code)]

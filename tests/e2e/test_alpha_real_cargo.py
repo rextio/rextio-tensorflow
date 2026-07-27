@@ -186,6 +186,26 @@ def argmax_axis0(x: TensorF32Cpu2D) -> TensorI64Cpu1D:
     return tf.argmax(x, 0)
 
 
+def transpose_default(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    return tf.transpose(x)
+
+
+def double_transpose(x: TensorF32Cpu2D) -> TensorF32Cpu2D:
+    # Two default transposes in one function exercise the prepared-perm helper
+    # path repeatedly; this is not a measured cache-hit counter.
+    return tf.transpose(tf.transpose(x))
+
+
+def transpose_then_reduce_mean_axis1(x: TensorF32Cpu2D) -> TensorF32Cpu1D:
+    return tf.reduce_mean(tf.transpose(x), axis=1)
+
+
+def dual_reduce_mean_sum_axis1(x: TensorF32Cpu2D) -> TensorF32Cpu1D:
+    # Two reductions share one extracted operand in the lowered function so the
+    # prepared-axis helper path runs more than once; not an empirical hit count.
+    return tf.reduce_mean(x, axis=1) + tf.reduce_sum(x, axis=1)
+
+
 def cpu_surface_vertical(
     matrix: TensorF32Cpu2D,
     gate_input: TensorF32Cpu1D,
@@ -198,6 +218,85 @@ def cpu_surface_vertical(
     column_summary = tf.reduce_mean(divided, 0, keepdims=True)
     row_summary = tf.reduce_sum(column_summary, axis=1, keepdims=True)
     return tf.argmax(row_summary, 0)
+
+
+def resident_intermediate_chain(
+    x: TensorF32Cpu2D,
+    weight: TensorF32Cpu2D,
+    bias: TensorF32Cpu1D,
+) -> TensorI64Cpu1D:
+    # Repeated typed intermediates exercise trusted resident fact reuse after
+    # boundary validation; not a measured cache-hit counter.
+    h = tf.matmul(x, weight)
+    h = tf.nn.relu(h)
+    h = tf.nn.tanh(h)
+    h = tf.nn.sigmoid(h)
+    h = tf.abs(h)
+    h = h + bias
+    probabilities = tf.nn.softmax(h, axis=1)
+    return tf.argmax(probabilities, axis=1)
+
+
+def small_batch_logits(
+    x: TensorF32Cpu2D,
+    mean: TensorF32Cpu1D,
+    scale: TensorF32Cpu1D,
+    feature_w: TensorF32Cpu2D,
+    feature_b: TensorF32Cpu1D,
+    head_w: TensorF32Cpu2D,
+    head_b: TensorF32Cpu1D,
+) -> TensorF32Cpu2D:
+    # Small-batch eager scoring body (logits only). Self-contained workload:
+    # normalize → feature affine → 4 scalar-controlled relu/tanh rounds → head.
+    normalized = (x - mean) / scale
+    hidden = tf.matmul(normalized, feature_w) + feature_b
+    for round_idx in range(4):
+        if round_idx % 2 == 0:
+            hidden = tf.nn.relu(hidden)
+        else:
+            hidden = tf.nn.tanh(hidden)
+    return tf.matmul(hidden, head_w) + head_b
+
+
+def small_batch_probabilities(
+    x: TensorF32Cpu2D,
+    mean: TensorF32Cpu1D,
+    scale: TensorF32Cpu1D,
+    feature_w: TensorF32Cpu2D,
+    feature_b: TensorF32Cpu1D,
+    head_w: TensorF32Cpu2D,
+    head_b: TensorF32Cpu1D,
+) -> TensorF32Cpu2D:
+    normalized = (x - mean) / scale
+    hidden = tf.matmul(normalized, feature_w) + feature_b
+    for round_idx in range(4):
+        if round_idx % 2 == 0:
+            hidden = tf.nn.relu(hidden)
+        else:
+            hidden = tf.nn.tanh(hidden)
+    logits = tf.matmul(hidden, head_w) + head_b
+    return tf.nn.softmax(logits, axis=1)
+
+
+def small_batch_classes(
+    x: TensorF32Cpu2D,
+    mean: TensorF32Cpu1D,
+    scale: TensorF32Cpu1D,
+    feature_w: TensorF32Cpu2D,
+    feature_b: TensorF32Cpu1D,
+    head_w: TensorF32Cpu2D,
+    head_b: TensorF32Cpu1D,
+) -> TensorI64Cpu1D:
+    normalized = (x - mean) / scale
+    hidden = tf.matmul(normalized, feature_w) + feature_b
+    for round_idx in range(4):
+        if round_idx % 2 == 0:
+            hidden = tf.nn.relu(hidden)
+        else:
+            hidden = tf.nn.tanh(hidden)
+    logits = tf.matmul(hidden, head_w) + head_b
+    probabilities = tf.nn.softmax(logits, axis=1)
+    return tf.argmax(probabilities, axis=1)
 """
 
 
@@ -476,6 +575,10 @@ def test_alpha_chain_real_cargo_certification(project: CertifiedProject) -> None
     assert "TF_TensorData" in rust
     assert "TF_INT64" in rust
     assert "axis_one_scalar" in rust
+    assert "PreparedConstantTable" in rust
+    assert "prepared_reduction_axis" in rust
+    assert "prepared_argmax_axis" in rust
+    assert "prepared_transpose_perm_rank2" in rust
     assert "Rc<OwnedTensorHandle>" in rust
     assert "unsafe impl Send" not in rust
     assert "RTLD_DEFAULT" not in rust
@@ -639,6 +742,143 @@ def test_i64_parameter_boundary_real_cargo(project: CertifiedProject) -> None:
     assert held.dtype == tf.int64
     assert held.shape == (4,)
     assert _tensor_equal(held, expected)
+
+
+def test_transpose_parity_lifetime_and_prepared_constant_path_real_cargo(
+    project: CertifiedProject,
+) -> None:
+    """Certify default transpose parity/lifetime and prepared-constant helper path.
+
+    Coverage proves source structure (prepared slots/helpers) plus repeated
+    native execution. It does not instrument or claim measured cache-hit rates.
+    """
+    tf = _import_tf()
+    transpose_record = _route_of(project, "tf_app.kernels.transpose_default")
+    assert transpose_record["native_status"] == "accepted"
+    assert transpose_record["route"] == "native-plugin:rextio-tensorflow"
+    assert [claim["rule_id"] for claim in transpose_record.get("plugin_claims") or []] == [
+        "rextio-tensorflow/transpose-f32-cpu-2d"
+    ]
+    double_record = _route_of(project, "tf_app.kernels.double_transpose")
+    assert double_record["native_status"] == "accepted"
+    assert {claim["rule_id"] for claim in double_record.get("plugin_claims") or []} == {
+        "rextio-tensorflow/transpose-f32-cpu-2d"
+    }
+    dual_record = _route_of(project, "tf_app.kernels.dual_reduce_mean_sum_axis1")
+    assert dual_record["native_status"] == "accepted"
+    dual_rules = {claim["rule_id"] for claim in dual_record.get("plugin_claims") or []}
+    assert "rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d" in dual_rules
+    assert "rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d" in dual_rules
+    assert "rextio-tensorflow/add-binop-f32-cpu" in dual_rules
+
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "rextio_tensorflow_runtime::transpose" in rust
+    assert "prepared_transpose_perm_rank2" in rust
+    assert "prepared_reduction_axis" in rust
+    assert 'OwnedOp::new(Rc::clone(&context), "Transpose"' in rust
+    assert "Handles are never process-global" in rust
+    assert "impl Drop for BorrowedContext" in rust
+    assert "prepared.replace(PreparedConstantTable::empty())" in rust
+
+    # Non-square rank-2 so swapped shape is observable (2×3 → 3×2).
+    matrix = tf.constant(
+        [[1.0, -2.0, 3.0], [-4.0, 0.5, 1.25]],
+        dtype=tf.float32,
+    )
+    assert tuple(matrix.shape) == (2, 3)
+    matrix_snapshot = tf.identity(matrix)
+    transpose_checker = project.equivalence_checker(
+        "tf_app.kernels.transpose_default",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_transpose = transpose_checker(matrix)
+    eager_transpose = tf.transpose(matrix_snapshot)
+    assert _tensor_equal(native_transpose, eager_transpose)
+    assert native_transpose.dtype == tf.float32
+    assert tuple(native_transpose.shape) == (3, 2)
+    assert tuple(eager_transpose.shape) == (3, 2)
+    assert "CPU" in native_transpose.device
+    assert _tensor_equal(matrix, matrix_snapshot)
+
+    double_checker = project.equivalence_checker(
+        "tf_app.kernels.double_transpose",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_double = double_checker(matrix)
+    eager_double = tf.transpose(tf.transpose(matrix_snapshot))
+    assert _tensor_equal(native_double, eager_double)
+    assert tuple(native_double.shape) == (2, 3)
+
+    chain_checker = project.equivalence_checker(
+        "tf_app.kernels.transpose_then_reduce_mean_axis1",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_chain = chain_checker(matrix)
+    eager_chain = tf.reduce_mean(tf.transpose(matrix_snapshot), axis=1)
+    assert _tensor_equal(native_chain, eager_chain)
+    assert tuple(native_chain.shape) == (3,)
+
+    dual_checker = project.equivalence_checker(
+        "tf_app.kernels.dual_reduce_mean_sum_axis1",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native_dual = dual_checker(matrix)
+    eager_dual = tf.reduce_mean(matrix_snapshot, axis=1) + tf.reduce_sum(
+        matrix_snapshot, axis=1
+    )
+    assert _tensor_equal(native_dual, eager_dual)
+    assert tuple(native_dual.shape) == (2,)
+
+    special = tf.constant(
+        [[float("nan"), 1.0, float("inf")], [float("-inf"), -0.0, 0.0]],
+        dtype=tf.float32,
+    )
+    assert tuple(special.shape) == (2, 3)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import transpose_default
+
+        native_special = transpose_default(special)
+    eager_special = tf.transpose(special)
+    assert tuple(native_special.shape) == (3, 2)
+    assert _float_special_values_equal(native_special, eager_special)
+
+    with _native_mode(project, "native"):
+        from tf_app.kernels import transpose_default
+
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            transpose_default(tf.constant([[1.0]], dtype=tf.float64))
+        with pytest.raises(Exception, match="rank-2"):
+            transpose_default(tf.constant([1.0, 2.0], dtype=tf.float32))
+
+    held_input = tf.identity(matrix_snapshot)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import (
+            double_transpose,
+            dual_reduce_mean_sum_axis1,
+            transpose_default,
+        )
+
+        held_transpose = transpose_default(held_input)
+        held_double = double_transpose(held_input)
+        held_dual = dual_reduce_mean_sum_axis1(held_input)
+    del held_input
+    import gc
+
+    gc.collect()
+    assert _tensor_equal(held_transpose, eager_transpose)
+    assert tuple(held_transpose.shape) == (3, 2)
+    assert _tensor_equal(held_double, eager_double)
+    assert _tensor_equal(held_dual, eager_dual)
 
 
 def test_reduce_sum_axis1_real_cargo(project: CertifiedProject) -> None:
@@ -976,6 +1216,19 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             "rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d"
         },
         "tf_app.kernels.argmax_axis0": {"rextio-tensorflow/argmax-axis0-i64-cpu-2d"},
+        "tf_app.kernels.transpose_default": {"rextio-tensorflow/transpose-f32-cpu-2d"},
+        "tf_app.kernels.double_transpose": {
+            "rextio-tensorflow/transpose-f32-cpu-2d",
+        },
+        "tf_app.kernels.transpose_then_reduce_mean_axis1": {
+            "rextio-tensorflow/transpose-f32-cpu-2d",
+            "rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d",
+        },
+        "tf_app.kernels.dual_reduce_mean_sum_axis1": {
+            "rextio-tensorflow/reduce-mean-axis1-f32-cpu-2d",
+            "rextio-tensorflow/reduce-sum-axis1-f32-cpu-2d",
+            "rextio-tensorflow/add-binop-f32-cpu",
+        },
     }
     for qualname, rules in expected_rules.items():
         record = _route_of(project, qualname)
@@ -1100,6 +1353,26 @@ def test_expanded_cpu_surface_real_cargo(project: CertifiedProject) -> None:
             "tf_app.kernels.argmax_axis0",
             (matrix,),
             lambda args: tf.argmax(args[0], 0),
+        ),
+        (
+            "tf_app.kernels.transpose_default",
+            (matrix,),
+            lambda args: tf.transpose(args[0]),
+        ),
+        (
+            "tf_app.kernels.double_transpose",
+            (matrix,),
+            lambda args: tf.transpose(tf.transpose(args[0])),
+        ),
+        (
+            "tf_app.kernels.transpose_then_reduce_mean_axis1",
+            (matrix,),
+            lambda args: tf.reduce_mean(tf.transpose(args[0]), axis=1),
+        ),
+        (
+            "tf_app.kernels.dual_reduce_mean_sum_axis1",
+            (matrix,),
+            lambda args: tf.reduce_mean(args[0], axis=1) + tf.reduce_sum(args[0], axis=1),
         ),
     )
     for qualname, args, eager_call in finite_cases:
@@ -1331,3 +1604,308 @@ class _native_mode:
             os.environ.pop("REXTIO_NATIVE_MODE", None)
         else:
             os.environ["REXTIO_NATIVE_MODE"] = self._previous
+
+
+def _small_batch_reference_logits(
+    x: object,
+    mean: object,
+    scale: object,
+    feature_w: object,
+    feature_b: object,
+    head_w: object,
+    head_b: object,
+) -> object:
+    tf = _import_tf()
+    normalized = (x - mean) / scale
+    hidden = tf.matmul(normalized, feature_w) + feature_b
+    for round_idx in range(4):
+        if round_idx % 2 == 0:
+            hidden = tf.nn.relu(hidden)
+        else:
+            hidden = tf.nn.tanh(hidden)
+    return tf.matmul(hidden, head_w) + head_b
+
+
+def _deterministic_small_batch_inputs(
+    batch: int,
+    *,
+    feature_width: int = 32,
+    classes: int = 8,
+) -> tuple[object, ...]:
+    """Build deterministic float32 fixtures for the small-batch scoring slice."""
+    tf = _import_tf()
+    # Arithmetic lattice in float32; values stay moderate to avoid softmax overflow.
+    x = tf.reshape(
+        tf.range(batch * feature_width, dtype=tf.float32) * 0.01 - 0.15,
+        (batch, feature_width),
+    )
+    mean = tf.reshape(
+        tf.range(feature_width, dtype=tf.float32) * 0.001 - 0.01,
+        (feature_width,),
+    )
+    scale = tf.reshape(
+        0.75 + tf.range(feature_width, dtype=tf.float32) * 0.005,
+        (feature_width,),
+    )
+    feature_w = tf.reshape(
+        tf.range(feature_width * feature_width, dtype=tf.float32) * 0.002 - 0.05,
+        (feature_width, feature_width),
+    )
+    feature_b = tf.reshape(
+        tf.range(feature_width, dtype=tf.float32) * 0.003,
+        (feature_width,),
+    )
+    head_w = tf.reshape(
+        tf.range(feature_width * classes, dtype=tf.float32) * 0.004 - 0.08,
+        (feature_width, classes),
+    )
+    head_b = tf.reshape(
+        tf.range(classes, dtype=tf.float32) * 0.01 - 0.03,
+        (classes,),
+    )
+    return x, mean, scale, feature_w, feature_b, head_w, head_b
+
+
+def test_resident_intermediate_chain_real_cargo(project: CertifiedProject) -> None:
+    """Repeated typed intermediates + full TF equivalence and source contracts.
+
+    Distinguishes boundary extract validation (facts stamped once) from later
+    trusted resident intermediate fact reuse. Does not claim measured speedups.
+    """
+    tf = _import_tf()
+    record = _route_of(project, "tf_app.kernels.resident_intermediate_chain")
+    assert record["native_status"] == "accepted"
+    assert record["route"] == "native-plugin:rextio-tensorflow"
+    rules = {claim["rule_id"] for claim in record.get("plugin_claims") or []}
+    assert "rextio-tensorflow/matmul-f32-cpu-2d" in rules
+    assert "rextio-tensorflow/relu-f32-cpu-2d" in rules
+    assert "rextio-tensorflow/tanh-f32-cpu-2d" in rules
+    assert "rextio-tensorflow/sigmoid-f32-cpu-2d" in rules
+    assert "rextio-tensorflow/abs-f32-cpu" in rules
+    assert "rextio-tensorflow/softmax-axis1-f32-cpu-2d" in rules
+    assert any("argmax" in r for r in rules)
+
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "struct TrustedResidentFacts" in rust
+    assert "facts: RefCell<Option<TrustedResidentFacts>>" in rust
+    assert "avoid redundant dtype/rank/device" in rust
+    assert "TF_Status allocation remains per operation" in rust
+    assert "no exact public" in rust
+    assert "TF_ResetStatus" in rust
+    assert 'framework.resolve("TF_ResetStatus")' not in rust
+    assert "thread_local!" not in rust
+    assert "OnceLock<TrustedResidentFacts>" not in rust
+    assert "impl Drop for BorrowedContext" in rust
+    assert "prepared.replace(PreparedConstantTable::empty())" in rust
+    # Boundary extract still validates; results still validate before trust.
+    assert "tensor.validate_f32(expected_rank)?" in rust or "validate_f32(expected_rank)" in rust
+    assert "result.validate_f32(expected_rank)?" in rust
+
+    x = tf.constant(
+        [[0.1, -0.2, 0.3], [0.4, 0.5, -0.6], [-0.1, 0.2, 0.0], [0.7, -0.3, 0.1]],
+        dtype=tf.float32,
+    )
+    weight = tf.constant(
+        [[0.2, -0.1], [0.0, 0.3], [0.1, 0.4]],
+        dtype=tf.float32,
+    )
+    bias = tf.constant([0.05, -0.02], dtype=tf.float32)
+    expected = tf.argmax(
+        tf.nn.softmax(
+            tf.abs(tf.nn.sigmoid(tf.nn.tanh(tf.nn.relu(tf.matmul(x, weight))))) + bias,
+            axis=1,
+        ),
+        axis=1,
+    )
+
+    checker = project.equivalence_checker(
+        "tf_app.kernels.resident_intermediate_chain",
+        equals=_tensor_equal,
+        args_equals=_args_unmutated,
+        copy_args=_copy_tensor_args,
+    )
+    native = checker(x, weight, bias)
+    assert _tensor_equal(native, expected)
+    assert native.dtype == tf.int64
+    assert tuple(native.shape) == (4,)
+
+    # Error recovery: invalid boundary still fails closed with the same messages.
+    with _native_mode(project, "native"):
+        from tf_app.kernels import resident_intermediate_chain
+
+        with pytest.raises(Exception, match="expected a float32 tensor"):
+            resident_intermediate_chain(
+                tf.constant([[1.0, 2.0, 3.0]], dtype=tf.float64),
+                weight,
+                bias,
+            )
+        with pytest.raises(Exception, match="rank-2"):
+            resident_intermediate_chain(
+                tf.constant([1.0, 2.0, 3.0], dtype=tf.float32),
+                weight,
+                bias,
+            )
+
+    # Lifetime: results remain valid after inputs drop (no global cache).
+    x_live = tf.identity(x)
+    w_live = tf.identity(weight)
+    b_live = tf.identity(bias)
+    with _native_mode(project, "native"):
+        from tf_app.kernels import resident_intermediate_chain
+
+        held = resident_intermediate_chain(x_live, w_live, b_live)
+    del x_live, w_live, b_live
+    import gc
+
+    gc.collect()
+    assert _tensor_equal(held, expected)
+
+
+def test_small_batch_scoring_equivalence_real_cargo(project: CertifiedProject) -> None:
+    """Self-contained small-batch eager scoring: full logits/probs/classes parity.
+
+    Compares Python source, generated fallback, and forced native for batches
+    1, 16, and 128 (feature width 32, classes 8). No speed threshold, no
+    performance claim. Optional ``tf.function`` diagnostic is non-headline and
+    does not gate native graph fusion.
+    """
+    tf = _import_tf()
+    for qualname in (
+        "tf_app.kernels.small_batch_logits",
+        "tf_app.kernels.small_batch_probabilities",
+        "tf_app.kernels.small_batch_classes",
+    ):
+        record = _route_of(project, qualname)
+        assert record["native_status"] == "accepted", qualname
+        assert record["route"] == "native-plugin:rextio-tensorflow", qualname
+
+    rust = (project.project_root / ".rextio" / "generated" / "rust" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "rextio_tensorflow_runtime::matmul" in rust
+    assert "rextio_tensorflow_runtime::sub" in rust or 'binary(left, right, "Sub"' in rust
+    assert "rextio_tensorflow_runtime::div" in rust or 'binary(left, right, "RealDiv"' in rust
+    assert "rextio_tensorflow_runtime::relu" in rust
+    assert "rextio_tensorflow_runtime::tanh" in rust
+    assert "rextio_tensorflow_runtime::softmax_axis1" in rust
+    assert "rextio_tensorflow_runtime::argmax_axis1" in rust
+    assert "struct TrustedResidentFacts" in rust
+
+    # Lock literal four-round scalar control flow inside each scoring body.
+    # Scope to the generated pyfunction so inference's separate for/if cannot
+    # satisfy this contract.
+    for rust_fn in (
+        "tf_app__kernels__small_batch_logits",
+        "tf_app__kernels__small_batch_probabilities",
+        "tf_app__kernels__small_batch_classes",
+    ):
+        marker = f"fn {rust_fn}<"
+        assert marker in rust, rust_fn
+        start = rust.index(marker)
+        rest = rust[start + len(marker) :]
+        # Next top-level generated entry (or module init) ends this body.
+        next_fn = rest.find("\nfn ")
+        body = rest if next_fn < 0 else rest[:next_fn]
+        assert "for round_idx in 0..4 {" in body, rust_fn
+        assert "if __rextio_checked_rem(round_idx, 2)? == 0 {" in body, rust_fn
+
+    feature_width = 32
+    classes = 8
+    for batch in (1, 16, 128):
+        args = _deterministic_small_batch_inputs(
+            batch, feature_width=feature_width, classes=classes
+        )
+        x, mean, scale, feature_w, feature_b, head_w, head_b = args
+        assert tuple(x.shape) == (batch, feature_width)
+        expected_logits = _small_batch_reference_logits(*args)
+        expected_probs = tf.nn.softmax(expected_logits, axis=1)
+        expected_classes = tf.argmax(expected_probs, axis=1)
+
+        logits_checker = project.equivalence_checker(
+            "tf_app.kernels.small_batch_logits",
+            equals=_tensor_equal,
+            args_equals=_args_unmutated,
+            copy_args=_copy_tensor_args,
+        )
+        probs_checker = project.equivalence_checker(
+            "tf_app.kernels.small_batch_probabilities",
+            equals=_tensor_equal,
+            args_equals=_args_unmutated,
+            copy_args=_copy_tensor_args,
+        )
+        classes_checker = project.equivalence_checker(
+            "tf_app.kernels.small_batch_classes",
+            equals=_tensor_equal,
+            args_equals=_args_unmutated,
+            copy_args=_copy_tensor_args,
+        )
+
+        native_logits = logits_checker(*args)
+        native_probs = probs_checker(*args)
+        native_classes = classes_checker(*args)
+
+        assert _tensor_equal(native_logits, expected_logits), f"logits batch={batch}"
+        assert _tensor_equal(native_probs, expected_probs), f"probs batch={batch}"
+        assert _tensor_equal(native_classes, expected_classes), f"classes batch={batch}"
+        assert native_logits.dtype == tf.float32
+        assert native_probs.dtype == tf.float32
+        assert native_classes.dtype == tf.int64
+        assert tuple(native_logits.shape) == (batch, classes)
+        assert tuple(native_probs.shape) == (batch, classes)
+        assert tuple(native_classes.shape) == (batch,)
+        # Do not compare only argmax: complete tensors already checked above.
+        assert float(tf.reduce_min(native_probs).numpy()) >= 0.0
+        assert abs(float(tf.reduce_sum(native_probs[0]).numpy()) - 1.0) < 1e-5
+
+        # Forced fallback and native routes explicitly (equivalence_checker already
+        # covers python/fallback/native; re-check native vs fallback for batch 1).
+        if batch == 1:
+            with _native_mode(project, "fallback"):
+                from tf_app.kernels import (
+                    small_batch_classes as fb_classes,
+                    small_batch_logits as fb_logits,
+                    small_batch_probabilities as fb_probs,
+                )
+
+                fallback_logits = fb_logits(*args)
+                fallback_probs = fb_probs(*args)
+                fallback_classes = fb_classes(*args)
+            with _native_mode(project, "native"):
+                from tf_app.kernels import (
+                    small_batch_classes as nt_classes,
+                    small_batch_logits as nt_logits,
+                    small_batch_probabilities as nt_probs,
+                )
+
+                forced_logits = nt_logits(*args)
+                forced_probs = nt_probs(*args)
+                forced_classes = nt_classes(*args)
+            assert _tensor_equal(fallback_logits, expected_logits)
+            assert _tensor_equal(forced_logits, expected_logits)
+            assert _tensor_equal(fallback_probs, expected_probs)
+            assert _tensor_equal(forced_probs, expected_probs)
+            assert _tensor_equal(fallback_classes, expected_classes)
+            assert _tensor_equal(forced_classes, expected_classes)
+
+    # Non-headline optional tf.function source-only diagnostic (Python path).
+    # Does not gate native acceptance and does not imply graph fusion.
+    x1, mean, scale, feature_w, feature_b, head_w, head_b = _deterministic_small_batch_inputs(1)
+    eager_logits = _small_batch_reference_logits(
+        x1, mean, scale, feature_w, feature_b, head_w, head_b
+    )
+
+    @tf.function
+    def _graph_logits(x, mean, scale, feature_w, feature_b, head_w, head_b):
+        return _small_batch_reference_logits(
+            x, mean, scale, feature_w, feature_b, head_w, head_b
+        )
+
+    graph_logits = _graph_logits(x1, mean, scale, feature_w, feature_b, head_w, head_b)
+    assert _tensor_equal(graph_logits, eager_logits)
+    # Diagnostic only: document that this is Python/tf.function, not native fusion.
+    _ = (
+        "non-headline tf.function diagnostic: Python source parity only; "
+        "not a native graph-fusion claim"
+    )

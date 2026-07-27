@@ -3,6 +3,64 @@
 All notable changes to `rextio-tensorflow` are documented here following Keep a
 Changelog and Semantic Versioning conventions.
 
+## [0.1.3] — 2026-07-27
+
+Public Alpha release on PyPI. Plugin-only on the 0.1.2 released foundation. No
+speedup, CUDA support-promotion, graph-fusion, or broader residency claims. The
+CUDA E3 lane remains a build-only, non-certifying engineering candidate with
+`support_claim=false` and `certification_ready=false`.
+
+### Added
+
+- Add exact CPU float32 rank-2 `tf.transpose(x)` / `tensorflow.transpose(x)`
+  lowering for the default Python semantics only (no `perm`, `conjugate`,
+  `name`, or other args/kwargs). Owned same-wheel TFE `Transpose` receives a
+  context-bound int32 permutation handle `[1, 0]`, revalidates float32 /
+  CPU:0 / rank-2, and fails closed on unsupported forms.
+- Add a small **context-bound prepared-constant cache** for reusable axes and
+  the rank-2 transpose permutation used by reductions, ArgMax, and transpose.
+  Handles are owned by the `BorrowedContext` RAII table (not process-global):
+  reuse is allowed only while the same context `Rc` remains live; cross-context
+  handle reuse is impossible by construction. Graph / `FunctionDef` fusion,
+  cross-generated-function residency, and broader variant caching require
+  future Core/region API work and are **not** delivered in 0.1.3.
+- Add **bounded invocation-local reuse** carried by generated values: after a
+  boundary extract or operation result is fully validated, dtype / rank /
+  device facts are stamped on the owned handle (`TrustedResidentFacts`) and
+  reused for later typed checks of that same resident intermediate inside the
+  generated call graph. Boundary tensors are still validated exactly once on
+  extract; every operation result is validated before its facts are trusted.
+  Core plugin API 1.6 has **no** per-generated-function invocation/prologue
+  hook, so this is **not** a Core-injected `InvocationContext`, process-global
+  cache, or thread-local tensor/context table. A true explicit invocation
+  object spanning one generated function remains a Core capability gap.
+- Document that **`TF_Status` stays per operation**: TensorFlow 2.21.0 exports
+  `TF_NewStatus` / `TF_DeleteStatus` / `TF_SetStatus` / `TF_GetCode` /
+  `TF_Message` but no exact public `TF_ResetStatus` (or equivalent fail-closed
+  reset) on the bound framework image, so reusable status buffers are not
+  adopted.
+- Add real-Cargo coverage for a repeated typed-intermediate classification
+  chain and a self-contained **small-batch eager scoring** equivalence slice
+  (normalize subtract/divide → feature matmul+add → 4 scalar-controlled
+  relu/tanh rounds → head matmul+add → softmax/argmax) for batches 1 / 16 /
+  128, feature width 32, classes 8. Complete logits, probabilities, and
+  classes are compared across Python source, generated fallback, and forced
+  native routes. An optional `tf.function` Python diagnostic is labeled
+  non-headline and does **not** gate or imply native graph fusion. No speed
+  threshold and **no performance claim**.
+
+### Changed
+
+- Bump package version to `0.1.3` for the public Alpha release while preserving
+  the 0.1.2 / 0.1.0 release history, TensorFlow `2.21.0` pin, CPython 3.11 ABI
+  checks, borrowed TensorHandle payload sharing at the Python boundary, and
+  all CUDA non-claims (`support_claim=false`, `certification_ready=false`).
+- CI push triggers now include the `0.1.3` integration branch in addition to
+  `main`.
+- CUDA runtime source derivation continues to transform the audited CPU helper
+  (including trusted-fact device short-circuit + exact GPU:0 validation) and
+  keeps the frozen E3 callable surface; no CUDA contract promotion.
+
 ## [0.1.2] — 2026-07-26
 
 Public native-AOT Alpha release on PyPI. The expanded CPU surface is released;

@@ -778,6 +778,33 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         verified=False,
     ),
     RuleRecord(
+        id="rextio-tensorflow/transpose-f32-cpu-2d",
+        provider="rextio-tensorflow",
+        scope=RuleScope(
+            kind="call",
+            pattern=(
+                "tf.transpose / tensorflow.transpose on float32 CPU rank-2 "
+                "tensors with default perm only"
+            ),
+        ),
+        constraint=(
+            "Exactly one positional float32 CPU rank-2 tensor and no keywords. "
+            "Default Python semantics only: perm is the reverse axes order "
+            "[1, 0], conjugate is False, and name is omitted. Owned same-wheel "
+            "TFE Transpose revalidates dtype/device/rank. Explicit perm, "
+            "conjugate, name, other ranks/devices/dtypes, and aliases remain "
+            "outside the surface."
+        ),
+        outcome="native",
+        diagnostic_code="RXTP-TENSORFLOW-039",
+        guidance=(
+            "Call tf.transpose(x) with a TensorF32Cpu2D positional argument and "
+            "omit perm, conjugate, and name."
+        ),
+        stability="experimental",
+        verified=True,
+    ),
+    RuleRecord(
         id="rextio-tensorflow/unsupported-tensor-surface",
         provider="rextio-tensorflow",
         scope=RuleScope(
@@ -798,9 +825,9 @@ RULE_RECORDS: tuple[RuleRecord, ...] = (
         guidance=(
             "Keep the Alpha slice on float32 CPU rank-1/2 matmul, activations, "
             "exact math unary operations, add/multiply/subtract/divide, reductions, "
-            "rank-1 softmax(axis=0/default), rank-2 softmax(axis=1), and "
-            "default-int64 argmax; other dtypes, devices, ranks, aliases, and "
-            "dynamic literals remain on the fallback."
+            "rank-1 softmax(axis=0/default), rank-2 softmax(axis=1), "
+            "default-int64 argmax, and default rank-2 transpose; other dtypes, "
+            "devices, ranks, aliases, and dynamic literals remain on the fallback."
         ),
         stability="experimental",
         verified=False,

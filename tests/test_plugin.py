@@ -45,7 +45,7 @@ def test_entry_point_factory_returns_plugin() -> None:
     assert isinstance(obj, RextioTensorflowPlugin)
     assert obj.plugin_id == PLUGIN_ID
     assert obj.api_version == REQUIRED_PLUGIN_API == "1.6"
-    assert __version__ == "0.1.2"
+    assert __version__ == "0.1.3"
 
 
 def test_core_loader_accepts_the_plugin() -> None:
@@ -140,6 +140,7 @@ def test_covers_alpha_surface() -> None:
     assert "tensorflow.reduce_sum" in coverage.symbols
     assert "tensorflow.nn.softmax" in coverage.symbols
     assert "tensorflow.argmax" in coverage.symbols
+    assert "tensorflow.transpose" in coverage.symbols
 
 
 def test_rule_records_are_namespaced_and_well_formed() -> None:
@@ -160,9 +161,11 @@ def test_rule_records_are_namespaced_and_well_formed() -> None:
     assert "RXTP-TENSORFLOW-010" in codes
     assert "RXTP-TENSORFLOW-032" in codes
     assert "RXTP-TENSORFLOW-033" in codes
+    assert "RXTP-TENSORFLOW-039" in codes
     record_ids = {record.id for record in records}
     assert "rextio-tensorflow/maximum-call-f32-cpu" in record_ids
     assert "rextio-tensorflow/minimum-call-f32-cpu" in record_ids
+    assert "rextio-tensorflow/transpose-f32-cpu-2d" in record_ids
 
 
 def test_type_vocabulary_keys_and_boundary() -> None:

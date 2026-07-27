@@ -1,7 +1,8 @@
 # rextio-tensorflow
 
-**Released 0.1.2 native-AOT Alpha** on **2026-07-26**. The prior release was
-0.1.0 (2026-07-18).
+**Released public Alpha 0.1.3** (plugin-only) on **2026-07-27**, building on the
+**released 0.1.2** native-AOT Alpha foundation (**2026-07-26**). The earlier
+initial public Alpha was 0.1.0 (2026-07-18).
 
 This is a Rextio **plugin API 1.6** provider with two deliberately separate
 lanes:
@@ -18,17 +19,17 @@ does not make it a CUDA support, certification, or performance claim.
 
 | Status field | Value |
 | --- | --- |
-| Version | `0.1.2` (`src/rextio_tensorflow/__about__.py`) |
+| Version | `0.1.3` (`src/rextio_tensorflow/__about__.py`) |
 | Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
-| Release state | **Released 2026-07-26** as [`rextio-tensorflow==0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) |
+| Release state | **Released 2026-07-27** as [`rextio-tensorflow==0.1.3`](https://pypi.org/project/rextio-tensorflow/0.1.3/); prior release [`0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) (2026-07-26) |
 | Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
 | Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
 | Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
 | CUDA candidate | Build-only hosted CI plus opt-in first-stage real-NVIDIA evidence; `support_claim=false`, `certification_ready=false` |
 
-The 0.1.2 release requires Core `rextio>=0.1.6,<0.2` and plugin API **1.6**.
-It rejects boundary-free standalone Rust lowering. CUDA lowering also
-requires exact authorization from
+The 0.1.3 release requires Core `rextio>=0.1.6,<0.2` and plugin API **1.6**.
+It rejects boundary-free standalone Rust lowering.
+CUDA lowering also requires exact authorization from
 `rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64`.
 
 The hosted CUDA job is compile/link-only: it never installs/imports TensorFlow,
@@ -43,7 +44,7 @@ support. See
 for the exact Linux GNU/CPython 3.11/TF 2.21.0/Rust 1.93.1 pins, clean
 candidate checkout, GPU:0/permitted-SM boundary, and commands.
 
-Final release verification completed on 2026-07-18: GitHub Actions
+The 0.1.0 final release verification completed on 2026-07-18: GitHub Actions
 [run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
 finished **13/13 jobs successfully**, and a no-cache CPython 3.11 install from
 PyPI resolved `tensorflow==2.21.0` and exposed the plugin entry point with API
@@ -65,7 +66,7 @@ plugin registration, the generated runtime helper
 
 | Component | Contract | Enforcement / evidence |
 | --- | --- | --- |
-| Package version | `0.1.2` | `__about__.__version__` |
+| Package version | `0.1.3` | `__about__.__version__` |
 | CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
 | Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
 | Rextio package | **`>=0.1.6,<0.2`** | API 1.6 device metadata and authorization |
@@ -201,6 +202,7 @@ same constraints and fails with `ValueError` (not `assert`).
 | Reduce sum | `tf.reduce_sum` / `tf.math.reduce_sum` | **2** | literal `axis=0\|1`, keyword or positional; named literal `keepdims=True\|False` or omitted | **1 or 2** | legacy axis-1 rule or `rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d` | `RXTP-TENSORFLOW-011` / `023` |
 | Softmax | `tf.nn.softmax` | **1 or 2** | rank 1: omitted or literal `axis=0`; rank 2: explicit literal `axis=1`; literal axes may be keyword or positional | preserves float32 rank | `rextio-tensorflow/softmax-axis{0-f32-cpu-1d,1-f32-cpu-2d}` | `RXTP-TENSORFLOW-025` / `007` |
 | ArgMax | `tf.argmax` | **2** float32 | explicit literal `axis=0\|1`, keyword or positional; default output type only | **1** int64 | `rextio-tensorflow/argmax-axis{0,1}-i64-cpu-2d` | `RXTP-TENSORFLOW-024` / `008` |
+| Transpose | `tf.transpose` / `tensorflow.transpose` | **2** float32 | **None** (default Python perm only; no `perm` / `conjugate` / `name`) | **2** | `rextio-tensorflow/transpose-f32-cpu-2d` | `RXTP-TENSORFLOW-039` |
 | Bias add | `tf.nn.bias_add` | rank-2 value + rank-1 bias | data format omitted or named literal `NHWC`; tensor operands positional | **2** float32 | `rextio-tensorflow/bias-add-nhwc-f32-cpu-2d` | `RXTP-TENSORFLOW-021` |
 
 ### Elementwise operand pairs (add, multiply, subtract, and divide)
@@ -313,15 +315,18 @@ All of the following are required for a site to be **Claimed** and lowered:
    as a TFE input.
 8. **Classification** — Softmax accepts rank-1 with its final axis omitted or
    literal axis 0, and rank-2 with explicit final axis 1. Raw TFE Softmax is
-   last-axis-only and transpose is excluded. ArgMax accepts explicit literal
-   axis 0 or 1 and retains default int64 output. Neither accepts `keepdims`;
-   extra/output-type keywords are rejected.
-9. **BiasAdd** — value is rank-2 float32 CPU, bias is rank-1 float32 CPU, both
+   last-axis-only (Softmax does not synthesize a transpose). ArgMax accepts
+   explicit literal axis 0 or 1 and retains default int64 output. Neither
+   accepts `keepdims`; extra/output-type keywords are rejected.
+9. **Default transpose** — exactly one rank-2 float32 CPU tensor; no keywords.
+   Default Python perm only (`[1, 0]`); explicit `perm`, `conjugate`, and
+   `name` are rejected.
+10. **BiasAdd** — value is rank-2 float32 CPU, bias is rank-1 float32 CPU, both
    are positional and ordered value-then-bias. `data_format` is omitted or
    named literal `NHWC`; NCHW, dynamic/positional format, `name`, keyword
    tensor operands, and other rank orders are rejected.
-10. **No dynamic axis/dtype/rank proof** — only the fixed Alpha vocabulary.
-11. **Inference-oriented slice** — not training/`GradientTape`, graph/Session,
+11. **No dynamic axis/dtype/rank proof** — only the fixed Alpha vocabulary.
+12. **Inference-oriented slice** — not training/`GradientTape`, graph/Session,
    `tf.function`/AutoGraph, or non-`CPU:0` execution.
 
 Static claims do **not** prove concrete shapes (e.g. matmul inner dimensions).
@@ -352,7 +357,15 @@ Anything outside the tables above is either:
 - Dynamic or non-0/1 reduction/classification axes; positional `keepdims`;
   rank-1 Softmax axis 1, rank-2 Softmax axis 0/default;
   `tf.argmax(output_type=...)`
-- Matmul transpose / other keywords
+- Explicit `tf.transpose` perm/conjugate/name; rank-1 or non-float32 transpose;
+  matmul `transpose_*` / other matmul keywords
+- Graph / `tf.function` / `FunctionDef` fusion, cross-generated-function
+  residency, process-global prepared-constant caches, and a Core-injected
+  per-generated-function `InvocationContext` (plugin API 1.6 has no
+  invocation/prologue hook). 0.1.3 reuses (1) context-bound axes/permutation
+  handles while a `BorrowedContext` `Rc` lives and (2) value-carried
+  dtype/rank/device facts on already-validated resident intermediates inside
+  one generated call graph — never a process-wide or thread-local tensor cache
 - In-place ops; scalar operands; inferred aliases such as `tf.math.truediv`;
   `tf.math.maximum` / `tf.math.minimum`, raw-op forms, and mixed-rank
   broadcasting for `tf.maximum` / `tf.minimum`
@@ -403,6 +416,35 @@ three expected images from that exact active wheel must be mapped. If the
 imported wheel does not map them, initialization fails closed rather than
 loading a second TensorFlow runtime.
 
+### Invocation-local reuse (0.1.3; bounded non-claim)
+
+Core `PLUGIN_API_VERSION` **1.6** exposes claim/lower/covers/describe/type
+vocabulary and optional `artifact_capability` only — **no**
+per-generated-function invocation or prologue hook. This plugin therefore does
+**not** invent a process-global, thread-local, or cross-context tensor/context
+cache.
+
+What 0.1.3 *does* deliver, carried by existing generated values:
+
+| Reuse | Scope | Notes |
+| --- | --- | --- |
+| Pinned Python eager context | `BorrowedContext` | Same synchronous capsule; no `TFE_NewContext` |
+| Prepared axes / transpose perm | `BorrowedContext` table | Context-bound RAII; not process-global |
+| Dtype / rank / device facts | `TrustedResidentFacts` on `OwnedTensorHandle` | Stamped after full validation; reused for later typed checks of that handle |
+| `TF_Status` | **Per operation** | No public `TF_ResetStatus` on TF 2.21.0; allocation stays fail-closed per op |
+
+**Avoided** after facts are trusted for a handle: redundant
+`TFE_TensorHandleDataType` / `NumDims` / `Dim` / `BackingDeviceName` queries
+for that same resident intermediate. **Not avoided**: boundary extract
+validation (exactly once), operation-result validation before stamping new
+facts, same-context checks, error messages, unsupported dtype/rank/device
+rejection, or PendingHandle / OwnedTensorHandle / PreparedHandle /
+BorrowedContext drop ordering.
+
+A true explicit `InvocationContext` spanning one generated function remains a
+**Core blocker** (needs a prologue/invocation hook, and optionally a
+fail-closed public status-reset symbol for reusable `TF_Status`).
+
 ---
 
 ## Compile-time fallback vs runtime fail-closed
@@ -411,7 +453,7 @@ loading a second TensorFlow runtime.
 | --- | --- | --- |
 | **Analysis / claim** | `Claimed` → lower to native; `NotCovered` / `Rejected` → ordinary Rextio **Python fallback** for that site | Yes — unsupported sites never leave the fallback path |
 | **Lowering** | Revalidates claim metadata; mismatch → `ValueError` (survives `python -O`) | N/A (compile/codegen failure) |
-| **Native runtime** (version, symbols, `RTLD_NOLOAD`, dtype/rank/device/boundary) | Raise stable `rextio-tensorflow: …` exceptions (`PyRuntimeError` / `PyValueError` / type errors on extract) | **No** — plugin API **1.3** has **no** runtime-availability / module-init hook to transparently re-run the Python body |
+| **Native runtime** (version, symbols, `RTLD_NOLOAD`, dtype/rank/device/boundary) | Raise stable `rextio-tensorflow: …` exceptions (`PyRuntimeError` / `PyValueError` / type errors on extract) | **No** — plugin API **1.6** has **no** runtime-availability / module-init hook to transparently re-run the Python body |
 
 Runtime error string prefixes used in contracts include (see
 `diagnostics.RUNTIME_ERRORS` and E2E boundary checks):
@@ -542,17 +584,17 @@ def inference(
 ## Install
 
 ```bash
-# Published package (CPython 3.11 only; installs tensorflow==2.21.0 exactly):
-python -m pip install --no-cache-dir "rextio-tensorflow==0.1.0"
+# Latest published package on PyPI (CPython 3.11 only; installs
+# tensorflow==2.21.0 exactly). This is rextio-tensorflow==0.1.3:
+python -m pip install --no-cache-dir "rextio-tensorflow==0.1.3"
 
-# Source contributors:
+# Editable/dev install from this source tree:
 python -m pip install -e ".[dev]"
 ```
 
-The published package was verified in a fresh CPython 3.11 environment with
-the exact TensorFlow 2.21.0 dependency and plugin API 1.3 entry-point metadata.
-The exact CPython, TensorFlow, ABI, and platform requirements above still
-apply.
+The latest published package is `rextio-tensorflow==0.1.3` with plugin API
+**1.6** entry-point metadata and the exact TensorFlow 2.21.0 dependency. The
+exact CPython, TensorFlow, ABI, and platform requirements above still apply.
 
 ---
 
@@ -565,6 +607,10 @@ pytest tests -m "not needs_cargo" -q
 # Real-Cargo E2E (run under CPython 3.11 + TF 2.21.0):
 pytest tests/e2e/test_alpha_real_cargo.py -q
 
+# Focused 0.1.3 slices (same suite; still equivalence-only, no speed gate):
+pytest tests/e2e/test_alpha_real_cargo.py::test_resident_intermediate_chain_real_cargo -q
+pytest tests/e2e/test_alpha_real_cargo.py::test_small_batch_scoring_equivalence_real_cargo -q
+
 # Opt-in Linux experimental probe (skipped unless env set + Linux host):
 REXTIO_TF_LINUX_PROBE=1 pytest tests/e2e/test_linux_experimental_probe.py -q
 
@@ -572,6 +618,17 @@ REXTIO_TF_LINUX_PROBE=1 pytest tests/e2e/test_linux_experimental_probe.py -q
 ruff check src tests
 mypy src
 ```
+
+**Small-batch scoring interpretation:** the
+`test_small_batch_scoring_equivalence_real_cargo` case is a self-contained
+non-release eager scoring workload (normalize → feature affine → 4
+scalar-controlled relu/tanh rounds → head → softmax/argmax) over deterministic
+float32 fixtures with batches **1 / 16 / 128**, feature width **32**, classes
+**8**. It compares **complete** logits, probabilities, and classes among
+Python source, generated fallback, and forced native. It does **not** assert
+latency thresholds and makes **no** performance claim. An optional
+`tf.function` Python diagnostic in that test is labeled non-headline and does
+not gate or imply native graph fusion. Kernel-heavy existing E2E cases remain.
 
 Focused unit tests cover analyzer-resolved import aliases, claim accept/reject,
 positional-literal alignment, lower emission into
@@ -592,8 +649,18 @@ rank-1 Softmax default/axis 0 → Abs/Neg/Square/Exp/Log/Sqrt → NHWC BiasAdd �
 subtraction → reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions →
 same-rank broadcast Maximum/Minimum → ArgMax axis 0, with CPU,
 NaN/Inf/domain/signed-zero, shape-error,
-no-host-resolve, provenance, and lifetime checks. The Linux
-probe is opt-in and does not claim certification when it has not been run.
+no-host-resolve, provenance, and lifetime checks. The 0.1.3 release adds
+default rank-2 `tf.transpose`, context-bound prepared axis/permutation
+handles for reductions, ArgMax, and transpose, and **bounded
+invocation-local reuse** of validated dtype/rank/device facts on resident
+intermediates (value-carried `TrustedResidentFacts`, not a global cache).
+Core still lacks a per-generated-function prologue hook, so a true explicit
+invocation object is **not** delivered. A self-contained small-batch eager
+scoring equivalence slice (batches 1/16/128, feature width 32, classes 8)
+compares full logits, probabilities, and classes across Python / fallback /
+native without speed thresholds. No graph fusion or cross-function
+residency. The Linux probe is opt-in and does not claim certification when
+it has not been run.
 
 ---
 
@@ -602,11 +669,11 @@ probe is opt-in and does not claim certification when it has not been run.
 | Field | Value |
 | --- | --- |
 | Name | `rextio-tensorflow` |
-| Version | `0.1.2` |
+| Version | `0.1.3` |
 | Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
 | Classifier | `Development Status :: 3 - Alpha` |
-| Release date | 2026-07-26 |
-| Distribution state | **Released** as [`rextio-tensorflow==0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) |
+| Release date | 2026-07-27 |
+| Distribution state | **Released** as [`rextio-tensorflow==0.1.3`](https://pypi.org/project/rextio-tensorflow/0.1.3/); prior release [`0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) (2026-07-26) |
 | License | MIT |
 
 The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
@@ -614,10 +681,11 @@ and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
 `ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
 wheel metadata.
 
-This is the released 0.1.2 source contract. The prior public Alpha 0.1.0 final
-CI run `29597803215` completed 13/13 jobs successfully, followed by the
-verified no-cache CPython 3.11 installation described above; that historical
-evidence remains scoped to 0.1.0.
+This is the released 0.1.3 public Alpha source contract on the 0.1.2
+foundation. The prior public Alpha 0.1.0 final CI run `29597803215` completed
+13/13 jobs successfully, followed by the verified no-cache CPython 3.11
+installation described above; that historical evidence remains scoped to
+0.1.0.
 
 For the intended Alpha architecture and staged scope, see the
 [0.1.0 implementation plan](docs/implementation-plan-0.1.0.md). Release-facing
@@ -633,7 +701,7 @@ current support contract.
 2. **Not a whole-project TensorFlow translator** — only the tabulated Alpha
    slice is claimable.
 3. **Not a performance product** — **no** speedup claim and **no** benchmark
-   release gate for 0.1.2.
+   release gate for 0.1.3.
 4. **Not a stable public ABI** — private EagerTensor bridge symbols and exact
    eager-context internals plus exact 2.21.0 / CPython 3.11 pins and the
    certified-vs-experimental platform profiles are intentional Alpha

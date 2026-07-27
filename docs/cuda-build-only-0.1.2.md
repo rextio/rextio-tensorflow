@@ -1,9 +1,11 @@
 # TensorFlow CUDA E3 build-only candidate
 
-This document describes the **non-certifying** CUDA candidate shipped in
-`rextio-tensorflow==0.1.2`. It remains `support_claim=false` and
+This document describes the **non-certifying** CUDA E3 contract that
+**originated in** `rextio-tensorflow==0.1.2` and is **retained by**
+`rextio-tensorflow==0.1.3`. It remains `support_claim=false` and
 `certification_ready=false` and must not be represented as working or formally
-supported CUDA functionality.
+supported CUDA functionality. Shipping the package does **not** promote CUDA
+support or certification.
 
 ## Frozen environment
 
@@ -74,7 +76,9 @@ owner.
 - `tf.function`, XLA, standalone Rust, Windows, macOS, or Linux non-GNU targets
 - Provider-created CUDA contexts, streams, allocators, synchronization, or
   raw CUDA resources
-- Performance claims, support claims, certification, release, and PyPI upload
+- Performance claims, CUDA support claims, CUDA certification, and CUDA
+  support/certification promotion (package release does not promote the CUDA
+  candidate)
 
 The int32 axis handle for `reduce_mean(axis=1)` is the one bounded host control
 input. It is not a user-tensor transfer.
@@ -103,9 +107,10 @@ This is a frozen environment, not a portability recipe:
 - CPython 3.11, TensorFlow `2.21.0`, and Rust `1.93.1`.
 - Core checkout exactly `7f47f0ce8cea0b6dbeb7fd3c733f65eeaa6bb5e0` and CUDA
   provider checkout exactly `cf65733f06b91a801f9806367f09948ee7162540`.
-- A clean TensorFlow-plugin checkout selected by `TF_REF=0.1.2`. After
-  checkout, derive the full lowercase SHA with `git rev-parse HEAD` and pass it
-  explicitly via
+- A clean TensorFlow-plugin checkout selected by `TF_REF=0.1.3` for current
+  0.1.3 evidence runs (historical 0.1.2 evidence used `TF_REF=0.1.2`, when this
+  contract originated). After checkout, derive the full lowercase SHA with
+  `git rev-parse HEAD` and pass it explicitly via
   `--expected-tensorflow-commit`; the harness verifies that it descends from
   the frozen E3 base.
 - Exactly one usable `GPU:0`, with a permitted architecture from this closed
@@ -141,7 +146,8 @@ git clone https://github.com/rextio/rextio-device-cuda.git \
 git -C "$E3_ROOT/checkouts/rextio-device-cuda" checkout --detach \
   cf65733f06b91a801f9806367f09948ee7162540
 export TF_ROOT="$E3_ROOT/checkouts/rextio-tensorflow"
-export TF_REF=0.1.2
+# Current 0.1.3 evidence pin. Historical 0.1.2 runs used TF_REF=0.1.2.
+export TF_REF=0.1.3
 git clone https://github.com/rextio/rextio-tensorflow.git "$TF_ROOT"
 git -C "$TF_ROOT" fetch --tags origin "$TF_REF"
 git -C "$TF_ROOT" checkout --detach "$TF_REF"
