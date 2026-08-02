@@ -1,6 +1,6 @@
 # rextio-tensorflow
 
-<p align="center"><img src="https://raw.githubusercontent.com/rextio/rextio-tensorflow/main/assets/readme/rextio-icon.png" width="112" alt="Rextio project icon"></p>
+<p align="center"><img src="./assets/readme/rextio-icon.png" width="112" alt="Rextio project icon"></p>
 <p align="center"><strong>Bounded TensorFlow inference lowering through Rextio's owned thin TFE C API runtime.</strong></p>
 <p align="center"><a href="https://pypi.org/project/rextio-tensorflow/0.1.3/"><img src="https://img.shields.io/pypi/v/rextio-tensorflow?label=PyPI" alt="rextio-tensorflow on PyPI"></a> <a href="https://github.com/rextio/rextio-tensorflow/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a></p>
 <p align="center"><strong>English</strong> · <a href="https://github.com/rextio/rextio-tensorflow/blob/main/README.ko.md">한국어</a> · <a href="https://github.com/rextio/rextio-tensorflow/blob/main/README.zh-hans.md">简体中文</a> · <a href="https://github.com/rextio/rextio-tensorflow/blob/main/README.zh-hant.md">繁體中文</a> · <a href="https://github.com/rextio/rextio-tensorflow/blob/main/README.ja.md">日本語</a></p>
