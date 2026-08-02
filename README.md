@@ -1,708 +1,134 @@
 # rextio-tensorflow
 
-**Released public Alpha 0.1.3** (plugin-only) on **2026-07-27**, building on the
-**released 0.1.2** native-AOT Alpha foundation (**2026-07-26**). The earlier
-initial public Alpha was 0.1.0 (2026-07-18).
+<p align="center"><img src="https://raw.githubusercontent.com/rextio/rextio-tensorflow/main/assets/readme/rextio-icon.png" width="112" alt="Rextio project icon"></p>
+<p align="center"><strong>Bounded TensorFlow inference lowering through Rextio's owned thin TFE C API runtime.</strong></p>
+<p align="center"><a href="https://pypi.org/project/rextio-tensorflow/0.1.3/"><img src="https://img.shields.io/pypi/v/rextio-tensorflow?label=PyPI" alt="rextio-tensorflow on PyPI"></a> <a href="https://github.com/rextio/rextio-tensorflow/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a></p>
+<p align="center"><strong>English</strong> · <a href="https://github.com/rextio/rextio-tensorflow/blob/main/README.ko.md">한국어</a> · <a href="https://github.com/rextio/rextio-tensorflow/blob/main/README.zh-hans.md">简体中文</a> · <a href="https://github.com/rextio/rextio-tensorflow/blob/main/README.zh-hant.md">繁體中文</a> · <a href="https://github.com/rextio/rextio-tensorflow/blob/main/README.ja.md">日本語</a></p>
 
-This is a Rextio **plugin API 1.6** provider with two deliberately separate
-lanes:
+`rextio-tensorflow` is a public native-AOT Alpha proof of concept for [Rextio](https://github.com/rextio/rextio). It lowers a narrow TensorFlow 2.21.0 inference surface into an owned Rust helper that calls the already-loaded wheel's eager TFE C API. It does not reimplement TensorFlow in pure Rust and has no TensorFlow Rust-crate dependency.
 
-- The existing bounded TensorFlow 2.21.0 **CPU Alpha** surface.
-- A Linux x86_64 GNU **CUDA E3 build-only candidate** for one exact
-  `matmul → bias_add → relu → reduce_mean(axis=1)` slice.
+> [!IMPORTANT]
+> This is an exact-version, inference-only Alpha. Unsupported sites stay on ordinary Python fallback; claimed native sites fail closed on ABI, symbol, version, dtype, rank, device, or eager-context mismatch. There is no transparent runtime retry and no training or speedup claim.
 
-Generated code does **not** reimplement TensorFlow in pure Rust. Both lanes use
-owned thin wrappers over the same already-loaded TensorFlow wheel's public TFE
-C API plus a private EagerTensor bridge (`RTLD_NOLOAD`). The CUDA lane has a
-separate generated module and Rust tensor type. Its inclusion in the package
-does not make it a CUDA support, certification, or performance claim.
+## See the bounded path
 
-| Status field | Value |
+```python
+import tensorflow as tf
+from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D
+
+
+def inference(
+    x: TensorF32Cpu2D,
+    weight: TensorF32Cpu2D,
+    bias: TensorF32Cpu1D,
+) -> TensorF32Cpu1D:
+    hidden = tf.matmul(x, weight)
+    biased = tf.nn.bias_add(hidden, bias)
+    activated = tf.nn.relu(biased)
+    return tf.reduce_mean(activated, axis=1)
+```
+
+Rextio can claim the exact rank/type route, keep intermediates as owned `TFE_TensorHandle` values, and materialize an ordinary `tf.Tensor` at the boundary. Concrete matrix and broadcast compatibility remains TensorFlow's runtime responsibility.
+
+## How it works
+
+```text
+typed Python function
+        ↓ Rextio API 1.6 claim + revalidation
+owned rextio_tensorflow_runtime helper
+        ↓ RTLD_NOLOAD + symbol/provenance checks
+already-loaded TensorFlow 2.21.0 wheel / synchronous eager TFE context
+```
+
+- The runtime reuses the active wheel; it creates no second TensorFlow context.
+- Public TFE C calls own operations, statuses, and tensor handles with RAII.
+- Function boundaries use three private EagerTensor bridge symbols from the exact 2.21.0 wheel. That private ABI is the principal Alpha risk.
+- Import-free marker classes describe CPU/CUDA, dtype, and rank. Runtime values remain ordinary exact EagerTensors.
+- Standalone Rust lowering is rejected. The plugin is a PyO3 host-extension integration.
+
+## Install and try
+
+```bash
+python3.11 -m pip install 'rextio>=0.1.6,<0.2' 'rextio-tensorflow==0.1.3'
+```
+
+The resolver installs the exact `tensorflow==2.21.0` dependency. Put the example above in a Rextio project and use the normal Rextio analysis/build flow. The same CPython 3.11 environment must import TensorFlow, run Rextio, and load the generated extension.
+
+## Compatibility contract
+
+| Component | Contract |
 | --- | --- |
-| Version | `0.1.3` (`src/rextio_tensorflow/__about__.py`) |
-| Maturity | Public Alpha PoC — limited, version-pinned native-AOT surface |
-| Release state | **Released 2026-07-27** as [`rextio-tensorflow==0.1.3`](https://pypi.org/project/rextio-tensorflow/0.1.3/); prior release [`0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) (2026-07-26) |
-| Performance claim | **None** — no benchmark gate; Alpha does not claim speedups |
-| Pure-Rust TensorFlow | **No** — native helpers call into the active wheel |
-| Abandoned TF Rust crates | **Not used** as Cargo dependencies (`crate_dependencies() == ()`) |
-| CUDA candidate | Build-only hosted CI plus opt-in first-stage real-NVIDIA evidence; `support_claim=false`, `certification_ready=false` |
-
-The 0.1.3 release requires Core `rextio>=0.1.6,<0.2` and plugin API **1.6**.
-It rejects boundary-free standalone Rust lowering.
-CUDA lowering also requires exact authorization from
-`rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64`.
-
-The hosted CUDA job is compile/link-only: it never installs/imports TensorFlow,
-loads the extension, or executes CUDA. A separately opt-in real-NVIDIA
-first-stage harness may produce self-attested execution/parity/lifetime
-evidence; its closed schema requires `kernel_activity_verified=false` and
-`runtime_transfer_profiled=false`, and preserves `support_claim=false` and
-`certification_ready=false`. The offline verifier establishes schema and
-payload integrity only, not GPU execution, hardware certification, or CUDA
-support. See
-[the CUDA build-only and manual-evidence contract](docs/cuda-build-only-0.1.2.md)
-for the exact Linux GNU/CPython 3.11/TF 2.21.0/Rust 1.93.1 pins, clean
-candidate checkout, GPU:0/permitted-SM boundary, and commands.
-
-The 0.1.0 final release verification completed on 2026-07-18: GitHub Actions
-[run `29597803215`](https://github.com/rextio/rextio-tensorflow/actions/runs/29597803215)
-finished **13/13 jobs successfully**, and a no-cache CPython 3.11 install from
-PyPI resolved `tensorflow==2.21.0` and exposed the plugin entry point with API
-**1.3** metadata. This is release evidence, not a performance claim.
-
-Unsupported call sites stay on Rextio’s ordinary **Python fallback** at
-analysis time. Sites that *are* claimed and lowered native still **fail closed
-at runtime** on version / symbol / boundary mismatch.
-**no** transparent runtime-availability / module-init retry hook.
-
----
-
-## Version, platform, and ABI contract
-
-Some entries are exact compatibility pins; others are package ranges, MSRV
-contracts, or certification evidence. They are enforced by package metadata,
-plugin registration, the generated runtime helper
-(`rextio_tensorflow_runtime`), or the stated certification environment.
-
-| Component | Contract | Enforcement / evidence |
-| --- | --- | --- |
-| Package version | `0.1.3` | `__about__.__version__` |
-| CPython | **3.11 only** (`requires-python = ">=3.11,<3.12"`) | `pyproject.toml`; runtime rejects other implementations/versions |
-| Platform profiles | See **Platform ABI profiles** below | Compile-time `PlatformAbiProfile` + runtime `validate_platform` |
-| Rextio package | **`>=0.1.6,<0.2`** | API 1.6 device metadata and authorization |
-| Plugin API | **1.6** (`REQUIRED_PLUGIN_API = "1.6"`) | `plugin.py`; loader contract tests |
-| TensorFlow (Python) | **`tensorflow==2.21.0`** | `pyproject.toml` dependency; runtime checks `tf.__version__` |
-| TensorFlow (C) | **`TF_Version() == "2.21.0"`** | Runtime `Api::load` |
-| Device | CPU lane: **`CPU:0`**; CUDA candidate: exact enumerated **`GPU:0`** | CUDA uses `TFE_ContextListDevices` and exact full-name equality |
-| Dtype | **float32 operation inputs/intermediates; default-int64 ArgMax output** | Runtime checks float32 rank-1/2 inputs and exact int64 rank-1 classification output/boundaries |
-| Ranks | **float32 rank 1/2; int64 rank 1 only** | Type vocabulary + claim/lower and boundary checks |
-| Execution surface | **Inference/no-grad only** | CUDA rejects when a backward tape or forward accumulator may record the supplied inputs, before handle copying or execution |
-| CUDA build toolchain | Rust **1.93.1**, CPython **3.11**, Linux x86_64 GNU | Exact build-only CI contract |
-| Certified Rust toolchain | `rustc 1.93.1`, `cargo 1.93.1` on `aarch64-apple-darwin` | Used for the current real-Cargo Alpha evidence; this repo has no `rust-toolchain.toml` |
-| Rust TF crates | **None** | `crate_dependencies() == ()`; helpers must not use `tensorflow-sys` / high-level `tensorflow` crate |
-
-The TensorFlow and CPython pins are intentionally exact because this Alpha
-crosses a private eager ABI. A successful install on another version is not a
-support claim. Release metadata uses the standard
-`Development Status :: 3 - Alpha` classifier; source availability and a dated
-release do not broaden the certified runtime profiles below.
+| Package | `rextio-tensorflow==0.1.3` (public Alpha, released 2026-07-27) |
+| CPython | `>=3.11,<3.12` — 3.11 only |
+| Rextio | `>=0.1.6,<0.2` |
+| Plugin API | `1.6` |
+| TensorFlow Python and C runtime | exactly `2.21.0`; `TF_Version() == "2.21.0"` |
+| CPU device | exact `CPU:0` |
+| CPU types | float32 rank 1/2; default ArgMax result/input boundary int64 rank 1 |
+| Generated runtime | no `tensorflow`/`tensorflow-sys` Cargo dependency |
+| Certified toolchain evidence | `rustc 1.93.1`, `cargo 1.93.1` on `aarch64-apple-darwin` |
+| Mode | synchronous eager inference; no training |
 
 ### Platform ABI profiles
 
-The generated runtime selects an explicit **platform ABI profile** at compile
-time (loader flags, wheel image basenames, Python `platform.machine()` tags).
-Common load logic never assumes Darwin-only paths or Darwin `dlfcn` numeric
-values mixed into Linux.
-
-| Profile id | Class | Target triple (Rust) | Python machines | Wheel images (relative to `tensorflow` package root) | `dlopen` flags (numeric) |
-| --- | --- | --- | --- | --- | --- |
-| `macos-arm64` | **Certified** | `aarch64-apple-darwin` | `arm64` | `libtensorflow_cc.2.dylib`, `libtensorflow_framework.2.dylib`, `python/lib_pywrap_tensorflow_common.dylib` | Darwin: `RTLD_NOW=0x2`, `RTLD_LOCAL=0x4`, `RTLD_NOLOAD=0x10` |
-| `linux-x86_64` | **Experimental** | `x86_64-unknown-linux-gnu` (`target_env=gnu` only) | `x86_64` | `libtensorflow_cc.so.2`, `libtensorflow_framework.so.2`, `python/lib_pywrap_tensorflow_common.so` | Linux glibc: `RTLD_NOW=0x2`, `RTLD_LOCAL=0`, `RTLD_NOLOAD=0x4` |
-| `linux-aarch64` | **Experimental** | `aarch64-unknown-linux-gnu` (`target_env=gnu` only) | `aarch64` or `arm64` | same Linux basenames as x86_64 | same Linux glibc values |
-| *(compile_error!)* | **Native-build fail-closed** | Windows, Linux **musl**, macOS x86_64/i686/ARMv7, Linux i686/ARMv7, and every other triple | n/a | n/a | n/a — clear `compile_error!` at native build (not a runtime dlfcn path) |
-
-**Certified** means a real-Cargo E2E path has been run on that profile (macOS
-arm64 only today). **Experimental** means official `tensorflow==2.21.0`
-**manylinux / glibc** wheel archives were inspected offline for image layout
-and exported private bridge symbols, and the runtime profile is wired for
-Linux **GNU** only (`target_env=gnu`). This tree does **not** claim a certified
-real-Cargo Linux E2E or any performance result. Linux **musl** is unsupported.
-
-### Public CI truth matrix
-
-The machine-readable source of truth is
-[`ci/platform-contract.json`](ci/platform-contract.json). Every requested
-Linux/macOS × x86/x64/ARM32/ARM64 cell is present, but only an upstream runtime
-profile can run native E2E. Static platform-contract jobs test the remaining
-cells as expected fail-closed outcomes; they are not emulated support claims.
-
-| Requested cell | Public Alpha result | CI treatment |
-| --- | --- | --- |
-| Linux x86_64 | **Experimental**; merged PR #1 passed real Cargo + TF 2.21.0 candidate-wheel E2E | Hosted native E2E remains a release gate |
-| Linux AArch64 | **Experimental / availability-gated** | Manual `ubuntu-24.04-arm` native E2E; no claim until green evidence exists |
-| Linux i686 | **Unsupported** — no pinned upstream runtime | Static expected-unsupported / native-build fail-closed |
-| Linux ARMv7 | **Unsupported** — no pinned upstream runtime | Static expected-unsupported / native-build fail-closed |
-| macOS ARM64 | **Certified Alpha baseline** | Hosted native E2E plus existing local real-Cargo evidence |
-| macOS x86_64 | **Availability-gated, currently unsupported** — no exact TF 2.21.0 wheel | Static expected-unsupported / native-build fail-closed |
-| macOS i686 | **Impossible modern target / unsupported** | Static expected-unsupported / native-build fail-closed |
-| macOS ARMv7 | **Impossible modern target / unsupported** | Static expected-unsupported / native-build fail-closed |
-
-The main workflow separates `quality`, `platform-contract`, `native-e2e`, and
-`package` jobs. Native E2E builds and installs the candidate wheel before
-running the real route/lifetime suite; it does not certify an editable source
-checkout. Actions have read-only repository permissions and every
-third-party Action reference is pinned to an immutable commit. Linux AArch64
-is a separate manual experimental workflow so runner availability cannot be
-misrepresented as routine certification. A stable aggregate `ci-gate` job is
-the intended branch-protection check.
-
-On Linux GNU, the generated helper links **libdl** explicitly
-(`#[link(name = "dl")]`) so cdylibs do not rely on incidental global
-resolution of `dlopen`/`dlsym` on older manylinux/glibc.
-
-Inspected wheels (download-only; not installed into the host environment):
-
-- `tensorflow-2.21.0-cp311-cp311-macosx_12_0_arm64.whl`
-- `tensorflow-2.21.0-cp311-cp311-manylinux_2_27_x86_64.whl`
-- `tensorflow-2.21.0-cp311-cp311-manylinux_2_27_aarch64.whl`
-
-Windows support is **explicitly deferred**. Unsupported compile targets
-(Windows, musl, other) fail closed at **native build** via `compile_error!`
-because the POSIX `dlfcn` externs are not a truthful runtime contract there.
-Runtime availability failures on supported profiles still never silently retry
-the Python body under plugin API 1.6 (no runtime-availability hook).
-
-### Why a private ABI exists
-
-Public TFE C symbols alone are not enough to round-trip Python
-`tf.Tensor` / EagerTensor objects at the function boundary without host
-resolve. The Alpha runtime therefore also resolves **private** bridge
-symbols from the active wheel’s pywrap image
-(`python/lib_pywrap_tensorflow_common.{dylib,so}`; Itanium-mangled names).
-Artifact-level `nm` of the three official 2.21.0 wheels above confirms the
-**same** three exports on macOS arm64 and Linux x86_64/aarch64:
-
-| Private symbol (mangled) | Role |
+| Host | Status |
 | --- | --- |
-| `_Z18EagerTensor_HandlePK7_object` | `EagerTensor_Handle` — extract underlying `TFE_TensorHandle*` |
-| `_Z21EagerTensorFromHandleP16TFE_TensorHandleb` | `EagerTensorFromHandle` — **takes ownership** of the handle (`is_packed=false`) |
-| `_Z22EagerTensor_CheckExactPK7_object` | Exact EagerTensor type check |
+| macOS arm64 | **Certified Alpha** real-Cargo path |
+| Linux x86_64 GNU/glibc | **Experimental**, hosted real-Cargo E2E; not certified |
+| Linux AArch64 GNU/glibc | **Experimental / availability-gated**, manual native E2E |
+| macOS x86_64 | Availability-gated and currently unsupported: no exact TF 2.21.0 wheel |
+| Windows, Linux musl, i686, ARMv7, other triples | Native build fails closed; unsupported or deferred |
 
-These are **private ABI**: a TensorFlow patch within 2.21.x can break them.
-That is an explicit residual risk of this PoC, not a public stability promise.
-The bridge also depends on Python internals in
-`tensorflow.python.eager.context`: `context()`, `ensure_initialized()`,
-`is_async()`, and the private `context()._handle` **null-named capsule**.
-Only the existing synchronous eager context is accepted. These Python-side
-details are part of the same exact-2.21.0 private ABI pin even though they are
-not C++ symbols.
+## Supported CPU surface
 
----
+All operation inputs are registered float32 CPU rank-1/rank-2 exact EagerTensors. Static arguments must match the forms below.
 
-## Supported TensorFlow forms and result ranks
-
-Claim decisions are pure functions of Rextio API 1.6 site metadata (kind,
-target, operand types, keyword **literals**). Lowering **revalidates** the
-same constraints and fails with `ValueError` (not `assert`).
-
-| Python form | Accepted targets | Operand ranks | Keywords | Result rank | Rule id | Diagnostic |
-| --- | --- | --- | --- | --- | --- | --- |
-| MatMul | `tf.matmul` / `tf.linalg.matmul` (also `tensorflow.*`) | **2 × 2** only | **None** (no `transpose_*`) | **2** | `rextio-tensorflow/matmul-f32-cpu-2d` | `RXTP-TENSORFLOW-001` |
-| ReLU | `tf.nn.relu` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/relu-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-018` / `002` |
-| Sigmoid | `tf.nn.sigmoid` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/sigmoid-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-019` / `005` |
-| Tanh | `tf.nn.tanh` | **1 or 2** | **None** | preserves rank | `rextio-tensorflow/tanh-f32-cpu-{1,2}d` | `RXTP-TENSORFLOW-020` / `009` |
-| Math unary | `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`, `tf.math.log`, `tf.math.sqrt` | **1 or 2** | exactly one positional operand; no keywords | preserves rank | `rextio-tensorflow/{abs,negative,square,exp,log,sqrt}-f32-cpu` | `RXTP-TENSORFLOW-026`–`031` |
-| Add (call) | `tf.add` / `tf.math.add` | See add pairs below | **None** | max rank | `rextio-tensorflow/add-call-f32-cpu` | `RXTP-TENSORFLOW-003` |
-| Add (binop) | binary `+` | See add pairs below | n/a | max rank | `rextio-tensorflow/add-binop-f32-cpu` | `RXTP-TENSORFLOW-006` |
-| Multiply | `tf.multiply` / `tf.math.multiply` or binary `*` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/mul-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-013` / `012` |
-| Subtract | `tf.subtract` / `tf.math.subtract` or binary `-` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/sub-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-014` / `015` |
-| Divide | `tf.divide` / `tf.math.divide` or binary `/` | See binary pairs below | calls take exactly two positional operands; no keywords | max rank | `rextio-tensorflow/div-{call,binop}-f32-cpu` | `RXTP-TENSORFLOW-016` / `017` |
-| Maximum / minimum | top-level `tf.maximum` / `tf.minimum` | **1 × 1 or 2 × 2**, equal ranks with TensorFlow-compatible same-rank broadcasting | exactly two positional non-literal tensors; no keywords | preserves rank | `rextio-tensorflow/{maximum,minimum}-call-f32-cpu` | `RXTP-TENSORFLOW-032` / `033` |
-| Reduce mean | `tf.reduce_mean` / `tf.math.reduce_mean` | **2** | literal `axis=0\|1`, keyword or positional; named literal `keepdims=True\|False` or omitted | **1 or 2** | legacy axis-1 rule or `rextio-tensorflow/reduce-mean-literal-axis-f32-cpu-2d` | `RXTP-TENSORFLOW-004` / `022` |
-| Reduce sum | `tf.reduce_sum` / `tf.math.reduce_sum` | **2** | literal `axis=0\|1`, keyword or positional; named literal `keepdims=True\|False` or omitted | **1 or 2** | legacy axis-1 rule or `rextio-tensorflow/reduce-sum-literal-axis-f32-cpu-2d` | `RXTP-TENSORFLOW-011` / `023` |
-| Softmax | `tf.nn.softmax` | **1 or 2** | rank 1: omitted or literal `axis=0`; rank 2: explicit literal `axis=1`; literal axes may be keyword or positional | preserves float32 rank | `rextio-tensorflow/softmax-axis{0-f32-cpu-1d,1-f32-cpu-2d}` | `RXTP-TENSORFLOW-025` / `007` |
-| ArgMax | `tf.argmax` | **2** float32 | explicit literal `axis=0\|1`, keyword or positional; default output type only | **1** int64 | `rextio-tensorflow/argmax-axis{0,1}-i64-cpu-2d` | `RXTP-TENSORFLOW-024` / `008` |
-| Transpose | `tf.transpose` / `tensorflow.transpose` | **2** float32 | **None** (default Python perm only; no `perm` / `conjugate` / `name`) | **2** | `rextio-tensorflow/transpose-f32-cpu-2d` | `RXTP-TENSORFLOW-039` |
-| Bias add | `tf.nn.bias_add` | rank-2 value + rank-1 bias | data format omitted or named literal `NHWC`; tensor operands positional | **2** float32 | `rextio-tensorflow/bias-add-nhwc-f32-cpu-2d` | `RXTP-TENSORFLOW-021` |
-
-### Elementwise operand pairs (add, multiply, subtract, and divide)
-
-| Left | Right | Result |
-| --- | --- | --- |
-| rank-2 | rank-2 | rank-2 |
-| rank-1 | rank-1 | rank-1 |
-| rank-2 | rank-1 | rank-2 (trailing bias broadcast) |
-| rank-1 | rank-2 | rank-2 (either order) |
-
-Claims prove **ranks only**. Concrete matrix / broadcast dimension
-compatibility is checked by TFE (`MatMul`, `AddV2`, …) at runtime.
-Maximum/minimum are narrower than the general binary matrix because mixed
-ranks are excluded. Within equal ranks, the owned TFE operation preserves
-TensorFlow's normal broadcasting and incompatible-shape behavior.
-
-### Coverage declaration (analyzer routing)
-
-Declared packages/modules/symbols (`rules/coverage.py`):
-
-- packages: `tensorflow`
-- modules: `tensorflow`, `tensorflow.linalg`, `tensorflow.nn`, `tensorflow.math`
-- symbols: `tensorflow.matmul`, `tensorflow.linalg.matmul`, `tensorflow.nn.relu`,
-  `tensorflow.nn.sigmoid`, `tensorflow.nn.tanh`, `tensorflow.abs`,
-  `tensorflow.negative`, `tensorflow.square`, `tensorflow.exp`,
-  `tensorflow.math.log`, `tensorflow.math.sqrt`, `tensorflow.add`,
-  `tensorflow.math.add`, `tensorflow.multiply`, `tensorflow.math.multiply`,
-  `tensorflow.subtract`, `tensorflow.math.subtract`, `tensorflow.divide`,
-  `tensorflow.math.divide`, `tensorflow.maximum`, `tensorflow.minimum`,
-  `tensorflow.reduce_mean`, `tensorflow.math.reduce_mean`, `tensorflow.reduce_sum`,
-  `tensorflow.math.reduce_sum`, `tensorflow.nn.softmax`,
-  `tensorflow.argmax`, `tensorflow.nn.bias_add`
-
-### Boundary annotation types
-
-Import-free markers (`rextio_tensorflow.types` — never import TensorFlow):
-
-| Annotation | Plugin type key | Rust native type |
-| --- | --- | --- |
-| `TensorF32Cpu2D` | `rextio-tensorflow/tensor-f32-cpu-2d` | `rextio_tensorflow_runtime::RxtTfTensor` |
-| `TensorF32Cpu1D` | `rextio-tensorflow/tensor-f32-cpu-1d` | `rextio_tensorflow_runtime::RxtTfTensor` |
-| `TensorI64Cpu1D` | `rextio-tensorflow/tensor-i64-cpu-1d` | `rextio_tensorflow_runtime::RxtTfTensor` |
-
-Runtime values remain ordinary `tf.Tensor` / EagerTensor objects. Intermediates
-between helpers stay `TFE_TensorHandle`-native (`RxtTfTensor` RAII). Python
-`for` / `if` that Rextio core can prove from scalar values remain ordinary core
-Rust control flow. Tensor-data-dependent branches are not part of this plugin
-surface.
-
-`TensorI64Cpu1D` is the default `tf.argmax` result type and is also a real
-input boundary type: native functions annotated with it accept only exact
-CPU int64 rank-1 EagerTensors. They reject float inputs, other ranks,
-`tf.Variable`, alternate runtimes, and non-CPU devices before executing.
-
-### Canonical lowered helpers
-
-Lowering emits calls into the exact generated module
-`rextio_tensorflow_runtime` (single helper block; no Cargo TF crates):
-
-| Op | Emitted Rust (shape) |
+| Family | Accepted forms and boundaries |
 | --- | --- |
-| matmul | `rextio_tensorflow_runtime::matmul(&a, &b)?` |
-| relu | `rextio_tensorflow_runtime::relu(&x)?` |
-| sigmoid | `rextio_tensorflow_runtime::sigmoid(&x)?` |
-| tanh | `rextio_tensorflow_runtime::tanh(&x)?` |
-| abs / negative / square / exp / log / sqrt | `rextio_tensorflow_runtime::{abs,negative,square,exp,log,sqrt}(&x)?` |
-| add / `+` | `rextio_tensorflow_runtime::add(&a, &b)?` |
-| bias add (NHWC) | `rextio_tensorflow_runtime::bias_add(&value, &bias)?` |
-| multiply / `*` | `rextio_tensorflow_runtime::mul(&a, &b)?` |
-| subtract / `-` | `rextio_tensorflow_runtime::sub(&a, &b)?` |
-| divide / `/` | `rextio_tensorflow_runtime::div(&a, &b)?` |
-| maximum / minimum | `rextio_tensorflow_runtime::{maximum,minimum}(&a, &b)?` |
-| reduce_mean axis=0/1 | `reduce_mean_axis{0,1}[_keepdims](&x)?` |
-| reduce_sum axis=0/1 | `reduce_sum_axis{0,1}[_keepdims](&x)?` |
-| softmax final axis | rank 1: `softmax_axis0(&x)?`; rank 2: `softmax_axis1(&x)?` |
-| argmax axis=0/1 (int64) | `rextio_tensorflow_runtime::argmax_axis{0,1}(&x)?` |
-| boundary extract | `extract_f32_cpu_{1,2}d` / `extract_i64_cpu_1d` |
-| boundary materialize | `materialize_tensor` (via `EagerTensorFromHandle`, ownership transfer) |
+| Matmul | `tf.matmul` / `tf.linalg.matmul`; rank 2 × 2; no transpose keywords |
+| Activations | `tf.nn.relu/sigmoid/tanh`; rank 1 or 2; no keywords |
+| Unary math | `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`, `tf.math.log`, `tf.math.sqrt`; one positional tensor, no keywords |
+| Elementwise | `tf.add/multiply/subtract/divide`, matching `tf.math.*`, or `+ * - /`; ranks 1/1, 2/2, 2/1, 1/2; no scalar/options |
+| Maximum/minimum | top-level `tf.maximum/minimum`; equal rank 1/1 or 2/2 only |
+| Mean/sum | `tf.reduce_mean/sum` or `tf.math.*`; rank 2; literal axis 0/1; `keepdims` omitted or named literal bool |
+| Softmax | `tf.nn.softmax`; rank 1 axis omitted/0 or rank 2 explicit axis 1 |
+| ArgMax | `tf.argmax`; rank-2 float32, explicit literal axis 0/1, default output type; returns int64 rank 1 |
+| Transpose | `tf.transpose`; rank 2; default permutation only, no `perm`, `conjugate`, or `name` |
+| Bias add | `tf.nn.bias_add`; rank-2 value + rank-1 bias; data format omitted or literal `NHWC` |
 
----
+Claims prove rank, not concrete dimensions. TFE validates matrix and broadcasting dimensions. `TensorF32Cpu2D`, `TensorF32Cpu1D`, and `TensorI64Cpu1D` are the CPU markers. Tensor-dependent control flow, variables, async eager, and alternate runtimes are outside the surface.
 
-## Static preconditions (must hold at claim/lower time)
+## Fallback and fail-closed behavior
 
-All of the following are required for a site to be **Claimed** and lowered:
+Unrecognized or unsupported calls remain Python fallback at analysis time. Recognized forms with invalid ranks or options are rejected with `RXTP-TENSORFLOW-*` guidance. Lowering independently revalidates rule IDs, ranks, targets, operand counts, and literal options, raising `ValueError` on drift.
 
-1. **Annotations** — claimed TensorFlow operation operands use the plugin
-   float32 CPU types above (not bare `tf.Tensor` or unannotated/`None` types).
-   `TensorI64Cpu1D` is limited to the classification result and exact rank-1
-   function input boundary; it is not accepted as a TensorFlow operation input.
-2. **Functional style only** — covered calls with a **receiver** are
-   `NotCovered` (no method-style receivers on matmul / unary operations / add /
-   reduce_mean / reduce_sum). Lowering also rejects claimed/rendered receivers
-   with `ValueError`.
-3. **Positional operands only** for matmul / activations / math unary / add
-   (keywords → `Rejected`).
-4. **Matmul** — exactly two rank-2 tensors; no transpose keywords.
-5. **Unary operations** — activations and the exact listed math-unary targets
-   accept exactly one rank-1 or rank-2 tensor and no keywords. Alternate
-   TensorFlow spellings such as `tf.math.abs` are not inferred aliases.
-6. **Elementwise binary ops** — exactly two tensors in a supported rank pair
-   (table above). Calls accept only the explicitly listed canonical targets
-   and two positional operands; scalars and inferred aliases are excluded.
-7. **reduce_mean / reduce_sum** — one rank-2 tensor plus static literal integer
-   axis 0 or 1, either by keyword or as the second positional operand with
-   exactly aligned `operand_literals`. `axis` metadata must have type `int`.
-   `keepdims` is omitted or a **named** literal bool with type `bool`;
-   positional keepdims, duplication, dynamic values, and extra keywords are
-   rejected. The positional axis is validated at lower time but never emitted
-   as a TFE input.
-8. **Classification** — Softmax accepts rank-1 with its final axis omitted or
-   literal axis 0, and rank-2 with explicit final axis 1. Raw TFE Softmax is
-   last-axis-only (Softmax does not synthesize a transpose). ArgMax accepts
-   explicit literal axis 0 or 1 and retains default int64 output. Neither
-   accepts `keepdims`; extra/output-type keywords are rejected.
-9. **Default transpose** — exactly one rank-2 float32 CPU tensor; no keywords.
-   Default Python perm only (`[1, 0]`); explicit `perm`, `conjugate`, and
-   `name` are rejected.
-10. **BiasAdd** — value is rank-2 float32 CPU, bias is rank-1 float32 CPU, both
-   are positional and ordered value-then-bias. `data_format` is omitted or
-   named literal `NHWC`; NCHW, dynamic/positional format, `name`, keyword
-   tensor operands, and other rank orders are rejected.
-11. **No dynamic axis/dtype/rank proof** — only the fixed Alpha vocabulary.
-12. **Inference-oriented slice** — not training/`GradientTape`, graph/Session,
-   `tf.function`/AutoGraph, or non-`CPU:0` execution.
+Once a site is native, the generated runtime does not replay Python on failure. It requires an already-imported exact TensorFlow 2.21.0 wheel, synchronous eager mode, exact EagerTensor objects, expected dtype/rank/device, the active context capsule, private bridge symbols, and correct `dladdr` provenance. Any mismatch raises a native exception.
 
-Static claims do **not** prove concrete shapes (e.g. matmul inner dimensions).
-Concrete incompatibilities fail later inside the owned TFE operation, including
-Maximum/Minimum shapes that cannot broadcast.
+## CUDA: build-only, non-promoting evidence
 
----
+The only candidate is frozen to Linux `x86_64-unknown-linux-gnu`, CPython 3.11, Rust 1.93.1, TensorFlow 2.21.0, exactly one `GPU:0`, permitted SM values, and float32 rank-1/rank-2 tensors already resident on that GPU:
 
-## Unsupported / fallback forms
-
-Anything outside the tables above is either:
-
-| Outcome | Meaning | Typical cases |
-| --- | --- | --- |
-| **`NotCovered`** | Plugin declines; site may stay on ordinary Python fallback | Unknown symbols (`tf.cos`, …); method receivers on covered targets; untyped (`None`) operands |
-| **`Rejected`** | Recognized shape but not lowerable; diagnostic + Python fallback | Wrong ranks; keywords on unary/binary calls; missing/dynamic/forged metadata; positional keepdims; non-plugin tensor types; unsupported BiasAdd format/forms |
-
-### Explicit exclusions (not Alpha-supported)
-
-- GPU, `CPU:1` or later, and every device other than `CPU:0`
-- Training, `GradientTape`, optimizers, or a general TensorFlow no-grad contract
-- `tf.Variable` or any non-exact EagerTensor at the Python boundary (E2E rejects it)
-- Graph / Session, `tf.function`, AutoGraph, Keras, or SavedModel
-- Tensor-data-dependent Python `if` / `for`, `tf.cond`, or `tf.while_loop`
-- Non-float32 operation inputs; int64 is supported only for the exact rank-1
-  ArgMax classification result and its annotated Python boundary
-- Rank-1 matmul; rank-3+ / batched matmul
-- Dynamic or non-0/1 reduction/classification axes; positional `keepdims`;
-  rank-1 Softmax axis 1, rank-2 Softmax axis 0/default;
-  `tf.argmax(output_type=...)`
-- Explicit `tf.transpose` perm/conjugate/name; rank-1 or non-float32 transpose;
-  matmul `transpose_*` / other matmul keywords
-- Graph / `tf.function` / `FunctionDef` fusion, cross-generated-function
-  residency, process-global prepared-constant caches, and a Core-injected
-  per-generated-function `InvocationContext` (plugin API 1.6 has no
-  invocation/prologue hook). 0.1.3 reuses (1) context-bound axes/permutation
-  handles while a `BorrowedContext` `Rc` lives and (2) value-carried
-  dtype/rank/device facts on already-validated resident intermediates inside
-  one generated call graph — never a process-wide or thread-local tensor cache
-- In-place ops; scalar operands; inferred aliases such as `tf.math.truediv`;
-  `tf.math.maximum` / `tf.math.minimum`, raw-op forms, and mixed-rank
-  broadcasting for `tf.maximum` / `tf.minimum`
-- Host resolve (`TFE_TensorHandleResolve`) on the inference path
-- DLPack
-- `TFE_NewContext` / second eager context / Session
-- Asynchronous eager contexts or mixing tensors from different eager contexts
-- Loading alternate dylibs (`RTLD_DEFAULT` not used)
-- Cargo dependency on abandoned high-level `tensorflow` crate or `tensorflow-sys`
-- **Any performance claim** (no benchmark gate for Alpha)
-
-Fallback rule record: `rextio-tensorflow/unsupported-tensor-surface`
-(`RXTP-TENSORFLOW-010`, outcome `fallback`).
-
----
-
-## Same-wheel runtime reuse (`RTLD_NOLOAD`)
-
-The generated runtime binds **only** images already loaded by the active
-`tensorflow==2.21.0` process — it does **not** load a second TensorFlow.
-It never uses `RTLD_DEFAULT` or a process-global symbol search as a substitute
-for per-image `dlsym` + `dladdr` provenance.
-
-On first API load (`Api::load`):
-
-1. Compile only for a supported `PlatformAbiProfile` (else `compile_error!`).
-   At runtime require CPython 3.11, a matching `platform.machine()`, and Python
-   `tf.__version__ == "2.21.0"`.
-2. Canonicalize the three active-wheel library paths under the package root
-   using the profile’s basenames (`.dylib` on certified macOS arm64; `.so.2`
-   / `.so` on experimental Linux GNU).
-3. Open each path only with
-   **`RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD`** using **OS-specific numeric
-   values** (Darwin `RTLD_NOLOAD=0x10` vs Linux glibc `RTLD_NOLOAD=0x4`;
-   Linux `RTLD_LOCAL=0`). Missing image → error (never an instruction to load
-   another copy).
-4. Resolve each symbol from its **owning** image (`cc` / `framework` / `pywrap`)
-   and verify provenance with **`dladdr`**.
-5. Require `TF_Version() == "2.21.0"`, import
-   `tensorflow.python.eager.context`, and reuse the existing synchronous
-   Python eager context's null-named private capsule (`context()._handle`) —
-   **no** `TFE_NewContext`.
-6. Retain the three handles with the function table so pointers stay live.
-
-The caller does not have to pre-import TensorFlow: lazy runtime initialization
-calls `py.import("tensorflow")`. By the time `RTLD_NOLOAD` runs, however, the
-three expected images from that exact active wheel must be mapped. If the
-imported wheel does not map them, initialization fails closed rather than
-loading a second TensorFlow runtime.
-
-### Invocation-local reuse (0.1.3; bounded non-claim)
-
-Core `PLUGIN_API_VERSION` **1.6** exposes claim/lower/covers/describe/type
-vocabulary and optional `artifact_capability` only — **no**
-per-generated-function invocation or prologue hook. This plugin therefore does
-**not** invent a process-global, thread-local, or cross-context tensor/context
-cache.
-
-What 0.1.3 *does* deliver, carried by existing generated values:
-
-| Reuse | Scope | Notes |
-| --- | --- | --- |
-| Pinned Python eager context | `BorrowedContext` | Same synchronous capsule; no `TFE_NewContext` |
-| Prepared axes / transpose perm | `BorrowedContext` table | Context-bound RAII; not process-global |
-| Dtype / rank / device facts | `TrustedResidentFacts` on `OwnedTensorHandle` | Stamped after full validation; reused for later typed checks of that handle |
-| `TF_Status` | **Per operation** | No public `TF_ResetStatus` on TF 2.21.0; allocation stays fail-closed per op |
-
-**Avoided** after facts are trusted for a handle: redundant
-`TFE_TensorHandleDataType` / `NumDims` / `Dim` / `BackingDeviceName` queries
-for that same resident intermediate. **Not avoided**: boundary extract
-validation (exactly once), operation-result validation before stamping new
-facts, same-context checks, error messages, unsupported dtype/rank/device
-rejection, or PendingHandle / OwnedTensorHandle / PreparedHandle /
-BorrowedContext drop ordering.
-
-A true explicit `InvocationContext` spanning one generated function remains a
-**Core blocker** (needs a prologue/invocation hook, and optionally a
-fail-closed public status-reset symbol for reusable `TF_Status`).
-
----
-
-## Compile-time fallback vs runtime fail-closed
-
-| Phase | Behavior | Transparent Python retry? |
-| --- | --- | --- |
-| **Analysis / claim** | `Claimed` → lower to native; `NotCovered` / `Rejected` → ordinary Rextio **Python fallback** for that site | Yes — unsupported sites never leave the fallback path |
-| **Lowering** | Revalidates claim metadata; mismatch → `ValueError` (survives `python -O`) | N/A (compile/codegen failure) |
-| **Native runtime** (version, symbols, `RTLD_NOLOAD`, dtype/rank/device/boundary) | Raise stable `rextio-tensorflow: …` exceptions (`PyRuntimeError` / `PyValueError` / type errors on extract) | **No** — plugin API **1.6** has **no** runtime-availability / module-init hook to transparently re-run the Python body |
-
-Runtime error string prefixes used in contracts include (see
-`diagnostics.RUNTIME_ERRORS` and E2E boundary checks):
-
-- `rextio-tensorflow: expected a TensorFlow EagerTensor`
-- `rextio-tensorflow: expected a CPU tensor`
-- `rextio-tensorflow: expected a float32 tensor`
-- rank mismatches on extract (message includes rank expectation)
-- version / symbol / wheel-path mismatches under the same `rextio-tensorflow:` prefix
-
----
-
-## Accepted and rejected examples
-
-### Accepted (claim → native lower)
-
-```python
-from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D, TensorI64Cpu1D
-import tensorflow as tf
-
-def inference(
-    x: TensorF32Cpu2D,
-    weight: TensorF32Cpu2D,
-    bias: TensorF32Cpu1D,
-) -> TensorI64Cpu1D:
-    h = tf.matmul(x, weight)           # rank-2 → rank-2
-    h = tf.nn.relu(h)                  # rank-2 → rank-2
-    h = tf.nn.sigmoid(h)               # optional; rank-2 → rank-2
-    h = h + bias                       # or tf.add(h, bias); rank-2
-    probabilities = tf.nn.softmax(h, axis=1)  # literal axis=1 → rank-2
-    return tf.argmax(probabilities, axis=1)   # default int64 → rank-1
+```text
+tf.matmul → tf.nn.bias_add(NHWC) → tf.nn.relu → tf.reduce_mean(axis=1)
 ```
 
-Also accepted (when types match the tables):
+It requires `rextio-device-cuda/cuda-tensorflow-tfe-linux-x86_64` authorization. Hosted CI uses a synthetic probe and only generates/links the extension; it never imports TensorFlow, loads the extension, or executes CUDA. The retained WSL2/RTX 3060 (`sm_86`) manual evidence is self-attested and verifier-valid, but the offline verifier proves schema/payload integrity—not GPU execution or certification. It deliberately records:
 
-- `tf.linalg.matmul(a, b)` (alias of matmul rule)
-- Explicit `tf.math.{add,multiply,subtract,divide}` aliases and `+ * - /`
-  across the bounded rank matrix
-- top-level `tf.maximum` / `tf.minimum` for two same-rank rank-1 or rank-2
-  tensors with TensorFlow-compatible broadcast shapes
-- rank-1 `tf.nn.relu` / `sigmoid` / `tanh`
-- rank-1/rank-2 `tf.abs`, `tf.negative`, `tf.square`, `tf.exp`,
-  `tf.math.log`, and `tf.math.sqrt`
-- rank-1 `tf.nn.softmax(x)` and `tf.nn.softmax(x, axis=0)`
-- `tf.nn.bias_add(matrix, bias)` and the explicit
-  `data_format="NHWC"` form
-- `tf.reduce_mean(x, 0, keepdims=True)` and
-  `tf.reduce_sum(x, axis=1, keepdims=False)`
-- `tf.argmax(x, 0)`; rank-2 Softmax remains explicit axis 1 only
-
-Core-lowerable scalar Python control flow around claimed ops is supported. The
-real-Cargo E2E uses `range(depth)` and an integer condition to choose relu or
-sigmoid; tensor-dependent control flow remains unsupported.
-
-### Rejected or not covered (stay on fallback or fail claim)
-
-| Example | Outcome (claim layer) |
-| --- | --- |
-| `tf.matmul(rank1, rank2)` | `Rejected` (wrong ranks) |
-| `tf.matmul(a, b, transpose_b=True)` | `Rejected` (keywords) |
-| `tf.reduce_mean(x)` without an explicit axis | `Rejected` |
-| `tf.reduce_mean(x, 0, True)` positional keepdims | `Rejected` |
-| dynamic/non-aligned/forged axis metadata | `Rejected` |
-| `tf.reduce_sum(x, axis=2)` or duplicate axis | `Rejected` |
-| rank-2 `tf.nn.softmax(x)` / `tf.nn.softmax(x, axis=0)` | `Rejected` |
-| rank-1 `tf.nn.softmax(x, axis=1)` | `Rejected` |
-| `tf.argmax(x, axis=1, output_type=tf.int32)` | `Rejected` |
-| `tf.nn.bias_add(x, bias, data_format="NCHW")` | `Rejected` |
-| `tf.maximum(rank2, rank1)` / `tf.minimum(rank1, rank2)` | `Rejected` (mixed ranks / broadcasting excluded) |
-| `tf.math.maximum(x, y)` / raw-op forms | `NotCovered` (only exact top-level targets are declared) |
-| `tf.cos(x)` | `NotCovered` |
-| Method-style receiver on a covered call | `NotCovered` |
-| Operand types outside plugin vocabulary on a covered symbol | `Rejected` (`RXTP-TENSORFLOW-010` / op diagnostic) |
-
-### Runtime fail-closed (after successful native claim/build)
-
-E2E boundary checks (real Cargo path) assert exceptions when native code is
-invoked with annotation-violating values, for example:
-
-| Runtime value at a `TensorF32Cpu2D` parameter | Observed failure |
-| --- | --- |
-| `float64` tensor | dtype message (`expected a float32 tensor`) |
-| rank-1 float32 tensor | rank message |
-| `tf.Variable(...)` | `expected a TensorFlow EagerTensor` |
-| NumPy array | `expected a TensorFlow EagerTensor` |
-
-These do **not** transparently fall back to the Python body under API 1.6.
-
----
-
-## Alpha surface (reference sketch)
-
-```python
-from rextio_tensorflow.types import TensorF32Cpu1D, TensorF32Cpu2D, TensorI64Cpu1D
-import tensorflow as tf
-
-def inference(
-    x: TensorF32Cpu2D,
-    weight: TensorF32Cpu2D,
-    bias: TensorF32Cpu1D,
-) -> TensorI64Cpu1D:
-    h = tf.matmul(x, weight)
-    h = tf.nn.relu(h)
-    h = h + bias
-    return tf.argmax(tf.nn.softmax(h, axis=1), axis=1)
+```text
+support_claim=false
+certification_ready=false
+kernel_activity_verified=false
+runtime_transfer_profiled=false
 ```
 
-### Boundary and ABI contract (summary)
+There is no transfer lowering, CPU/CUDA mixing, `GPU:1`, multi-GPU, Variables, GradientTape, forward accumulator, async eager, `tf.function`, XLA, training, Windows/macOS CUDA, kernel-activity claim, transfer-profile claim, performance claim, or CUDA support claim. See the [complete frozen CUDA contract](docs/cuda-build-only-0.1.2.md).
 
-- Python boundary types: `TensorF32Cpu2D` / `TensorF32Cpu1D` / `TensorI64Cpu1D`
-  (import-free markers); the classification head materializes exactly int64 rank-1 output.
-- Native type: `rextio_tensorflow_runtime::RxtTfTensor` (owned handle RAII;
-  clones share `Rc` owner — never an unowned pointer fallback).
-- Extract: private `EagerTensor_Handle` then
-  `TFE_TensorHandleCopySharingTensor` (no host resolve).
-- Materialize: `EagerTensorFromHandle(..., is_packed=false)` **takes ownership**.
-- Exact Python `tensorflow.__version__` and C `TF_Version()` must both be
-  `2.21.0`; active-wheel images opened only with profile
-  `RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD` (OS-specific numeric values).
-- Reuses the existing Python eager context capsule. **No** `TFE_NewContext`,
-  **no** Session, **no** DLPack, **no** `TFE_TensorHandleResolve` on the
-  inference path.
-- Borrowed context capsule and Python Context are held by strong Python
-  references for every owned handle.
+## Further detail
 
----
+- [CUDA build-only and manual-evidence contract](docs/cuda-build-only-0.1.2.md)
+- [Platform truth matrix](ci/platform-contract.json)
+- [Changelog](CHANGELOG.md)
 
-## Install
+## License
 
-```bash
-# Latest published package on PyPI (CPython 3.11 only; installs
-# tensorflow==2.21.0 exactly). This is rextio-tensorflow==0.1.3:
-python -m pip install --no-cache-dir "rextio-tensorflow==0.1.3"
-
-# Editable/dev install from this source tree:
-python -m pip install -e ".[dev]"
-```
-
-The latest published package is `rextio-tensorflow==0.1.3` with plugin API
-**1.6** entry-point metadata and the exact TensorFlow 2.21.0 dependency. The
-exact CPython, TensorFlow, ABI, and platform requirements above still apply.
-
----
-
-## Tests
-
-```bash
-# Unit / contract (no Cargo), including all platform truth cells:
-pytest tests -m "not needs_cargo" -q
-
-# Real-Cargo E2E (run under CPython 3.11 + TF 2.21.0):
-pytest tests/e2e/test_alpha_real_cargo.py -q
-
-# Focused 0.1.3 slices (same suite; still equivalence-only, no speed gate):
-pytest tests/e2e/test_alpha_real_cargo.py::test_resident_intermediate_chain_real_cargo -q
-pytest tests/e2e/test_alpha_real_cargo.py::test_small_batch_scoring_equivalence_real_cargo -q
-
-# Opt-in Linux experimental probe (skipped unless env set + Linux host):
-REXTIO_TF_LINUX_PROBE=1 pytest tests/e2e/test_linux_experimental_probe.py -q
-
-# Lint / types (when the dev extra is installed):
-ruff check src tests
-mypy src
-```
-
-**Small-batch scoring interpretation:** the
-`test_small_batch_scoring_equivalence_real_cargo` case is a self-contained
-non-release eager scoring workload (normalize → feature affine → 4
-scalar-controlled relu/tanh rounds → head → softmax/argmax) over deterministic
-float32 fixtures with batches **1 / 16 / 128**, feature width **32**, classes
-**8**. It compares **complete** logits, probabilities, and classes among
-Python source, generated fallback, and forced native. It does **not** assert
-latency thresholds and makes **no** performance claim. An optional
-`tf.function` Python diagnostic in that test is labeled non-headline and does
-not gate or imply native graph fusion. Kernel-heavy existing E2E cases remain.
-
-Focused unit tests cover analyzer-resolved import aliases, claim accept/reject,
-positional-literal alignment, lower emission into
-`rextio_tensorflow_runtime`, plugin API 1.6 loader contract, empty crate deps,
-runtime-helper hardening (`RTLD_NOLOAD`, private bridge symbols, no
-`unwrap`/`panic!` in helpers), and **platform ABI profile source contracts**
-(certified macOS arm64, experimental Linux x86_64/aarch64, unsupported/
-Windows/32-bit fail-closed). The E2E uses the invoking CPython 3.11
-environment, requires exact TensorFlow 2.21.0, and fails if the configured
-interpreter or platform contract differs. Merged PR #1 produced hosted
-candidate-wheel real-Cargo evidence on macOS ARM64 and Linux x86_64. The
-declared certification class remains **macOS ARM64 only**; Linux stays
-experimental pending a separate support-promotion decision. The original
-vertical slice remains rank-2 matmul → rank-2 activations → scalar Rust
-control flow → broadcast add → classification. The 0.1.2 follow-up adds a
-real-Cargo slice spanning rank-1 relu/sigmoid/tanh → functional multiply →
-rank-1 Softmax default/axis 0 → Abs/Neg/Square/Exp/Log/Sqrt → NHWC BiasAdd →
-subtraction → reverse-broadcast RealDiv → axis-0/axis-1 keepdims reductions →
-same-rank broadcast Maximum/Minimum → ArgMax axis 0, with CPU,
-NaN/Inf/domain/signed-zero, shape-error,
-no-host-resolve, provenance, and lifetime checks. The 0.1.3 release adds
-default rank-2 `tf.transpose`, context-bound prepared axis/permutation
-handles for reductions, ArgMax, and transpose, and **bounded
-invocation-local reuse** of validated dtype/rank/device facts on resident
-intermediates (value-carried `TrustedResidentFacts`, not a global cache).
-Core still lacks a per-generated-function prologue hook, so a true explicit
-invocation object is **not** delivered. A self-contained small-batch eager
-scoring equivalence slice (batches 1/16/128, feature width 32, classes 8)
-compares full logits, probabilities, and classes across Python / fallback /
-native without speed thresholds. No graph fusion or cross-function
-residency. The Linux probe is opt-in and does not claim certification when
-it has not been run.
-
----
-
-## Package metadata
-
-| Field | Value |
-| --- | --- |
-| Name | `rextio-tensorflow` |
-| Version | `0.1.3` |
-| Entry point | `rextio.plugins` → `rextio_tensorflow.plugin:plugin` |
-| Classifier | `Development Status :: 3 - Alpha` |
-| Release date | 2026-07-27 |
-| Distribution state | **Released** as [`rextio-tensorflow==0.1.3`](https://pypi.org/project/rextio-tensorflow/0.1.3/); prior release [`0.1.2`](https://pypi.org/project/rextio-tensorflow/0.1.2/) (2026-07-26) |
-| License | MIT |
-
-The isolated PEP 517 build backend is pinned exactly to `setuptools==82.0.1`
-and `wheel==0.47.0`; CI package/test tools are likewise exact-pinned under
-`ci/`. Transitive TensorFlow dependencies remain resolved by its exact 2.21.0
-wheel metadata.
-
-This is the released 0.1.3 public Alpha source contract on the 0.1.2
-foundation. The prior public Alpha 0.1.0 final CI run `29597803215` completed
-13/13 jobs successfully, followed by the verified no-cache CPython 3.11
-installation described above; that historical evidence remains scoped to
-0.1.0.
-
-For the intended Alpha architecture and staged scope, see the
-[0.1.0 implementation plan](docs/implementation-plan-0.1.0.md). Release-facing
-changes are recorded in [CHANGELOG.md](CHANGELOG.md); this README is the
-current support contract.
-
----
-
-## What this is not
-
-1. **Not pure-Rust TensorFlow** — ops execute through the active wheel’s TFE C
-   API; Rust owns handles and orchestration only.
-2. **Not a whole-project TensorFlow translator** — only the tabulated Alpha
-   slice is claimable.
-3. **Not a performance product** — **no** speedup claim and **no** benchmark
-   release gate for 0.1.3.
-4. **Not a stable public ABI** — private EagerTensor bridge symbols and exact
-   eager-context internals plus exact 2.21.0 / CPython 3.11 pins and the
-   certified-vs-experimental platform profiles are intentional Alpha
-   constraints. Windows remains deferred.
+[MIT](LICENSE)
